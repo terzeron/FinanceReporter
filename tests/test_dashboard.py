@@ -1,0 +1,182 @@
+"""대시보드 HTML 생성 모듈 테스트."""
+
+import json
+
+import pytest
+
+from dashboard import generate_html, build_dashboard
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def analysis_data():
+    """AI 분석 결과."""
+    return {
+        "provider": "claude",
+        "content": "<p>경제 동향 분석입니다.</p><p>두 번째 문단.</p><p>세 번째.</p>",
+        "generated_at": "2024-03-01 12:00:00",
+    }
+
+
+@pytest.fixture
+def series_list():
+    """시리즈 메타데이터 리스트."""
+    return [
+        {
+            "series_id": "DGS10",
+            "title": "10-Year Treasury",
+            "title_ko": "미국 10년물 국채 금리",
+        },
+        {
+            "series_id": "VIX",
+            "title": "CBOE Volatility Index",
+            "title_ko": "변동성 지수",
+        },
+    ]
+
+
+@pytest.fixture
+def charts_dir(tmp_path):
+    """차트 PNG가 있는 디렉토리."""
+    d = tmp_path / "charts"
+    d.mkdir()
+    for name in ["DGS10.png", "DGS10_1y.png", "VIX.png", "VIX_1y.png"]:
+        (d / name).write_bytes(b"fake png")
+    return d
+
+
+@pytest.fixture
+def data_dir(tmp_path):
+    """시리즈 JSON이 있는 디렉토리."""
+    d = tmp_path / "data"
+    d.mkdir()
+    for sid in ["DGS10", "VIX"]:
+        data = {
+            "series_id": sid,
+            "title": f"Title {sid}",
+            "title_ko": f"한글 {sid}",
+            "observations": [{"date": "2024-01-01", "value": 1.0}],
+        }
+        (d / f"{sid}.json").write_text(json.dumps(data))
+    return d
+
+
+# ---------------------------------------------------------------------------
+# generate_html
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateHtml:
+    def test_contains_analysis(self, analysis_data, series_list):
+        """분석 텍스트가 HTML에 포함."""
+        html = generate_html(analysis_data, series_list)
+        assert "경제 동향 분석입니다." in html
+
+    def test_contains_chart_images(self, analysis_data, series_list):
+        """차트 이미지 경로가 포함."""
+        html = generate_html(analysis_data, series_list)
+        assert 'src="charts/DGS10.png?' in html
+        assert 'src="charts/DGS10_1y.png?' in html
+        assert 'src="charts/VIX.png?' in html
+
+    def test_contains_series_titles(self, analysis_data, series_list):
+        """시리즈 한글 제목이 포함."""
+        html = generate_html(analysis_data, series_list)
+        assert "미국 10년물 국채 금리" in html
+        assert "변동성 지수" in html
+
+    def test_responsive_css(self, analysis_data, series_list):
+        """반응형 CSS가 포함."""
+        html = generate_html(analysis_data, series_list)
+        assert "@media" in html
+        assert "flex" in html
+
+    def test_fallback_analysis(self, series_list):
+        """분석 실패 시 fallback 메시지."""
+        fallback = {
+            "provider": "none",
+            "content": "<p>AI 분석을 이용할 수 없습니다.</p>",
+            "generated_at": "2024-03-01",
+        }
+        html = generate_html(fallback, series_list)
+        assert "AI 분석을 이용할 수 없습니다." in html
+
+    def test_returns_valid_html(self, analysis_data, series_list):
+        """HTML 문서 기본 구조."""
+        html = generate_html(analysis_data, series_list)
+        assert "<!DOCTYPE html>" in html
+        assert "<html" in html
+        assert "</html>" in html
+
+    def test_provider_shown(self, analysis_data, series_list):
+        """분석 제공자가 표시."""
+        html = generate_html(analysis_data, series_list)
+        assert "claude" in html.lower()
+
+
+# ---------------------------------------------------------------------------
+# build_dashboard
+# ---------------------------------------------------------------------------
+
+
+class TestBuildDashboard:
+    def test_creates_index_html(self, tmp_path, charts_dir, data_dir):
+        """출력 디렉토리에 index.html 생성."""
+        output = tmp_path / "output"
+        analysis = {
+            "provider": "claude",
+            "content": "<p>테스트</p>",
+            "generated_at": "2024-03-01",
+        }
+        build_dashboard(
+            output_dir=output,
+            data_dir=data_dir,
+            charts_dir=charts_dir,
+            analysis=analysis,
+        )
+        assert (output / "index.html").exists()
+
+    def test_copies_chart_images(self, tmp_path, charts_dir, data_dir):
+        """차트 이미지를 출력 디렉토리에 복사."""
+        output = tmp_path / "output"
+        analysis = {"provider": "none", "content": "<p>x</p>", "generated_at": ""}
+        build_dashboard(
+            output_dir=output,
+            data_dir=data_dir,
+            charts_dir=charts_dir,
+            analysis=analysis,
+        )
+        assert (output / "charts" / "DGS10.png").exists()
+        assert (output / "charts" / "VIX_1y.png").exists()
+
+    def test_creates_output_dir(self, tmp_path, charts_dir, data_dir):
+        """출력 디렉토리가 없으면 자동 생성."""
+        output = tmp_path / "deep" / "nested" / "output"
+        analysis = {"provider": "none", "content": "<p>x</p>", "generated_at": ""}
+        build_dashboard(
+            output_dir=output,
+            data_dir=data_dir,
+            charts_dir=charts_dir,
+            analysis=analysis,
+        )
+        assert output.exists()
+        assert (output / "index.html").exists()
+
+    def test_html_references_relative_paths(self, tmp_path, charts_dir, data_dir):
+        """HTML에서 이미지를 상대경로로 참조."""
+        output = tmp_path / "output"
+        analysis = {"provider": "none", "content": "<p>x</p>", "generated_at": ""}
+        build_dashboard(
+            output_dir=output,
+            data_dir=data_dir,
+            charts_dir=charts_dir,
+            analysis=analysis,
+        )
+        html = (output / "index.html").read_text()
+        assert 'src="charts/' in html
+        # 절대경로가 아님
+        assert 'src="/' not in html
