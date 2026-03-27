@@ -1,6 +1,7 @@
 # Finance Dashboard
 
 ![대시보드 미리보기](docs/dashboard-preview.png)
+![차트 카드 미리보기](docs/dashboard-chart-preview.png)
 
 FRED, Yahoo Finance 데이터를 수집하여 경제지표 차트와 AI 분석을 포함한 대시보드를 생성합니다.
 
