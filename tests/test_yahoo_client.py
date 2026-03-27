@@ -205,3 +205,99 @@ class TestFetchAll:
             assert loaded["series_id"] == data["series_id"]
             assert loaded["title"] == data["title"]
             assert len(loaded["observations"]) == len(data["observations"])
+
+    @patch("yahoo.client.yfinance.Ticker")
+    def test_uses_cache(self, mock_ticker_cls, client, sample_df, tmp_path):
+        """캐시 유효 시 API 호출 건너뛴다."""
+        # 먼저 데이터 저장
+        mock_ticker_cls.return_value.history.return_value = sample_df
+        client.fetch_all(data_dir=tmp_path)
+
+        # 두 번째 호출 — 캐시에서 로드
+        mock_ticker_cls.reset_mock()
+        results = client.fetch_all(data_dir=tmp_path)
+        assert len(results) == len(SERIES_MAP)
+        # yfinance Ticker가 호출되지 않아야 함
+        mock_ticker_cls.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# yahoo.client.main
+# ---------------------------------------------------------------------------
+
+
+class TestYahooClientMain:
+    @patch("yahoo.client.yfinance.Ticker")
+    def test_main_prints_results(
+        self, mock_ticker_cls, tmp_path, sample_df, capsys, monkeypatch
+    ):
+        """main() 실행 시 결과 출력."""
+        from yahoo.client import main as yahoo_main
+
+        monkeypatch.chdir(tmp_path)
+        mock_ticker_cls.return_value.history.return_value = sample_df
+
+        yahoo_main()
+
+        captured = capsys.readouterr()
+        assert "완료" in captured.out
+
+    @patch("yahoo.client.yfinance.Ticker")
+    def test_main_uses_cache(
+        self, mock_ticker_cls, tmp_path, sample_df, capsys, monkeypatch
+    ):
+        """캐시 유효 시 '캐시 사용' 출력."""
+        from yahoo.client import main as yahoo_main
+
+        monkeypatch.chdir(tmp_path)
+        mock_ticker_cls.return_value.history.return_value = sample_df
+
+        # 첫 실행 — 데이터 저장
+        yahoo_main()
+        mock_ticker_cls.reset_mock()
+
+        # 두 번째 실행 — 캐시 사용
+        yahoo_main()
+        captured = capsys.readouterr()
+        assert "캐시 사용" in captured.out
+
+    @patch("yahoo.client.yfinance.Ticker")
+    def test_main_prints_no_data(
+        self, mock_ticker_cls, tmp_path, empty_df, capsys, monkeypatch
+    ):
+        """관측값 없으면 'no data' 출력."""
+        from yahoo.client import main as yahoo_main
+
+        monkeypatch.chdir(tmp_path)
+        mock_ticker_cls.return_value.history.return_value = empty_df
+
+        yahoo_main()
+
+        captured = capsys.readouterr()
+        assert "no data" in captured.out
+
+    @patch("yahoo.client.yfinance.Ticker")
+    def test_if_name_main_guard(
+        self, mock_ticker_cls, tmp_path, sample_df, monkeypatch
+    ):
+        """if __name__ == '__main__' 가드를 통해 main() 실행."""
+        import runpy
+
+        monkeypatch.chdir(tmp_path)
+        mock_ticker_cls.return_value.history.return_value = sample_df
+        runpy.run_module("yahoo.client", run_name="__main__")
+        assert (tmp_path / "data").exists()
+
+
+class TestYahooModuleEntrypoint:
+    """python -m yahoo 엔트리포인트 테스트."""
+
+    @patch("yahoo.client.yfinance.Ticker")
+    def test_run_as_module(self, mock_ticker_cls, tmp_path, sample_df, monkeypatch):
+        """python -m yahoo로 실행."""
+        import runpy
+
+        monkeypatch.chdir(tmp_path)
+        mock_ticker_cls.return_value.history.return_value = sample_df
+        runpy.run_module("yahoo", run_name="__main__")
+        assert (tmp_path / "data").exists()

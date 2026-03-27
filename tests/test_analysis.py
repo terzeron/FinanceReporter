@@ -117,6 +117,16 @@ class TestExtractRecentData:
         result_60 = extract_recent_data(long_series, out2, days=60)
         assert len(result_7["observations"]) <= len(result_60["observations"])
 
+    def test_empty_observations(self, tmp_path):
+        """observations가 빈 리스트이면 빈 결과 반환."""
+        data = _make_series("EMPTY", "Empty", "빈 시리즈", [])
+        path = tmp_path / "EMPTY.json"
+        path.write_text(json.dumps(data))
+        out = tmp_path / "EMPTY_1m.json"
+        result = extract_recent_data(path, out)
+        assert result["observations"] == []
+        assert result["series_id"] == "EMPTY"
+
 
 # ---------------------------------------------------------------------------
 # extract_all_recent
@@ -291,3 +301,133 @@ class TestAnalyzeWithAi:
         mock_claude.return_value = "그냥 텍스트 응답"
         result = analyze_with_ai("prompt", data_dir=tmp_path)
         assert "<p>" in result["content"]
+
+
+# ---------------------------------------------------------------------------
+# _summarize_series
+# ---------------------------------------------------------------------------
+
+
+class TestSummarizeSeries:
+    def test_all_none_observations(self):
+        """모든 observation value가 None이면 '데이터 없음' 반환."""
+        from analysis import _summarize_series
+
+        data = {
+            "series_id": "TEST",
+            "title": "Test Series",
+            "title_ko": "테스트",
+            "observations": [
+                {"date": "2024-01-01", "value": None},
+                {"date": "2024-01-02", "value": None},
+            ],
+        }
+        result = _summarize_series(data)
+        assert "데이터 없음" in result
+        assert "TEST" in result
+
+    def test_no_title_ko_uses_title(self):
+        """title_ko 없으면 title 사용."""
+        from analysis import _summarize_series
+
+        data = {
+            "series_id": "X",
+            "title": "Fallback Title",
+            "observations": [
+                {"date": "2024-01-01", "value": None},
+            ],
+        }
+        result = _summarize_series(data)
+        assert "Fallback Title" in result
+
+
+# ---------------------------------------------------------------------------
+# _ensure_html
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureHtml:
+    def test_whitespace_only_text(self):
+        """공백만 있는 텍스트도 <p>로 감싼다."""
+        from analysis import _ensure_html
+
+        result = _ensure_html("   ")
+        assert "<p>" in result
+
+    def test_multi_paragraph(self):
+        """빈 줄로 구분된 여러 문단을 각각 <p>로 감싼다."""
+        from analysis import _ensure_html
+
+        result = _ensure_html("첫 문단\n\n두 번째 문단")
+        assert result.count("<p>") == 2
+
+    def test_already_html(self):
+        """이미 <p> 태그가 있으면 그대로 반환."""
+        from analysis import _ensure_html
+
+        html = "<p>이미 HTML</p>"
+        assert _ensure_html(html) == html
+
+
+# ---------------------------------------------------------------------------
+# _call_claude / _call_chatgpt / _call_gemini 개별 함수 테스트
+# ---------------------------------------------------------------------------
+
+
+class TestCallClaude:
+    def test_returns_text(self):
+        """Claude API 호출 후 텍스트 반환."""
+        from unittest.mock import MagicMock
+
+        mock_anthropic = MagicMock()
+        mock_msg = MagicMock()
+        mock_msg.content = [MagicMock(text="<p>Claude 분석</p>")]
+        mock_anthropic.Anthropic.return_value.messages.create.return_value = mock_msg
+
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+            from analysis import _call_claude
+
+            result = _call_claude("테스트 프롬프트")
+        assert result == "<p>Claude 분석</p>"
+
+
+class TestCallChatgpt:
+    def test_returns_text(self):
+        """ChatGPT API 호출 후 텍스트 반환."""
+        from unittest.mock import MagicMock
+
+        mock_openai = MagicMock()
+        mock_choice = MagicMock()
+        mock_choice.message.content = "<p>GPT 분석</p>"
+        mock_openai.OpenAI.return_value.chat.completions.create.return_value = (
+            MagicMock(choices=[mock_choice])
+        )
+
+        with patch.dict("sys.modules", {"openai": mock_openai}):
+            from analysis import _call_chatgpt
+
+            result = _call_chatgpt("테스트 프롬프트")
+        assert result == "<p>GPT 분석</p>"
+
+
+class TestCallGemini:
+    def test_returns_text(self):
+        """Gemini API 호출 후 텍스트 반환."""
+        from unittest.mock import MagicMock
+
+        mock_google = MagicMock()
+        mock_genai = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = "<p>Gemini 분석</p>"
+        mock_genai.Client.return_value.models.generate_content.return_value = (
+            mock_response
+        )
+        mock_google.genai = mock_genai
+
+        with patch.dict(
+            "sys.modules", {"google": mock_google, "google.genai": mock_genai}
+        ):
+            from analysis import _call_gemini
+
+            result = _call_gemini("테스트 프롬프트")
+        assert result == "<p>Gemini 분석</p>"

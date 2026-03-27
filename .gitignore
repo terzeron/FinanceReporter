@@ -16,5 +16,20 @@ wheels/
 # Generated artifacts
 data/
 charts/
-fred/
-yahoo/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Test runner artifacts
+.last_test_run
+.last_test_success
+.test_performance_cache
+.dependency_cache
+
+# IDE
+.idea/
+.vscode/
+
+# Ruff
+.ruff_cache/

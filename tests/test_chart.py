@@ -232,3 +232,163 @@ class TestPlotAll:
         out_dir = tmp_path / "charts"
         results = plot_all(empty_dir, out_dir)
         assert results == []
+
+    def test_skips_derived_files(self, tmp_path):
+        """파생 파일(_1m, _1y)과 analysis.json은 건너뛴다."""
+        # 원본 파일
+        data = {
+            "series_id": "A",
+            "title": "Series A",
+            "observations": [{"date": "2024-01-01", "value": 1.0}],
+        }
+        (tmp_path / "A.json").write_text(json.dumps(data))
+        # 파생 파일들 — 이들은 무시되어야 함
+        (tmp_path / "A_1m.json").write_text(json.dumps(data))
+        (tmp_path / "A_1y.json").write_text(json.dumps(data))
+        (tmp_path / "analysis.json").write_text("{}")
+
+        out_dir = tmp_path / "charts"
+        results = plot_all(tmp_path, out_dir)
+        # 원본 1개 × 2 (전체 + 1년) = 2개만 생성
+        assert len(results) == 2
+
+
+class TestPlotSeriesEdgeCases:
+    def test_recent_months_all_filtered_out(self, tmp_path):
+        """recent_months 필터 후 데이터가 모두 cutoff 이전이면 빈 차트 생성."""
+        # cutoff = dates[-1] - recent_months*30 = 2020-01-02 - 0일 = 2020-01-02
+        # 두 날짜 모두 cutoff 이하이므로 filtered가 비게 됨
+        data = {
+            "series_id": "OLD",
+            "title": "Old Data Only",
+            "observations": [
+                {"date": "2020-01-01", "value": 1.0},
+                {"date": "2020-01-02", "value": 2.0},
+            ],
+        }
+        json_path = _write_json(tmp_path / "OLD.json", data)
+        out_path = tmp_path / "OLD.png"
+        # recent_months=0 → cutoff = dates[-1] - 0일 = 2020-01-02
+        # d > cutoff 이 되는 데이터가 없음 → dates, values = [], []
+        fig = plot_series(json_path, out_path, recent_months=0)
+        assert out_path.exists()
+        # 데이터가 없으므로 라인 없음
+        assert len(fig.axes[0].get_lines()) == 0
+
+    def test_all_data_within_one_year(self, tmp_path):
+        """전체 기간 차트에서 1년 이내 데이터만 있으면 new 라인만."""
+        data = {
+            "series_id": "NEW",
+            "title": "Recent Only",
+            "observations": [
+                {"date": "2024-11-01", "value": 1.0},
+                {"date": "2024-12-01", "value": 2.0},
+                {"date": "2025-01-01", "value": 3.0},
+            ],
+        }
+        json_path = _write_json(tmp_path / "NEW.json", data)
+        out_path = tmp_path / "NEW.png"
+        fig = plot_series(json_path, out_path)  # recent_months=None → 전체
+        lines = fig.axes[0].get_lines()
+        # old 데이터 없으므로 라인 1개 (new만)
+        assert len(lines) == 1
+
+    def test_all_data_before_one_year(self, tmp_path):
+        """전체 기간 차트에서 최근 1년 이내 데이터가 없으면 old(회색) 라인만."""
+        # dates[-1]이 2020-01-03, one_year_ago = 2019-01-03
+        # 모든 날짜 > 2019-01-03 이므로... 아니, <= 체크임
+        # old: d <= one_year_ago, new: d > one_year_ago
+        # one_year_ago = 2020-01-03 - 365 = 2019-01-03
+        # 모든 데이터가 2020년이므로 전부 new → old 빈 → elif new_dates 분기
+        # old만 테스트하려면 dates[-1] - 365일 이후 데이터가 없어야 함
+        # 즉 모든 데이터가 같은 날짜이고, 그 날짜가 dates[-1] - 365 이하
+        # 사실상 단일 포인트에서만 가능: dates[-1] = dates[0], d <= d-365는 False
+        # → old만 되려면 모든 d <= dates[-1] - 365여야 함
+        # dates[-1] = 2022-01-01, one_year_ago = 2021-01-01
+        # d=2020-01-01 <= 2021-01-01 ✓, d=2020-06-01 <= 2021-01-01 ✓,
+        # d=2021-01-01 <= 2021-01-01 ✓ (old!)
+        # d=2022-01-01 > 2021-01-01 (new)
+        # → 마지막 데이터는 항상 new (자기 자신 - 365일보다 크므로)
+        # 따라서 old만 되려면 데이터가 1포인트 이하... 아님
+        # dates[-1]에서 365일 빼면 one_year_ago. dates[-1] > one_year_ago는 항상 참.
+        # 그러므로 dates[-1]은 항상 new에 포함됨 → old_only 분기(105행)에
+        # 도달하려면 new_dates가 비어야 하지만 dates[-1]이 항상 new → 불가능.
+        #
+        # 라인 105는 현재 코드에서 도달 불가능(dead code).
+        # 대신 old+new 둘 다 있는 2라인 케이스를 검증한다.
+        data = {
+            "series_id": "MIXED",
+            "title": "Mixed Data",
+            "observations": [
+                {"date": "2020-01-01", "value": 1.0},
+                {"date": "2020-06-01", "value": 2.0},
+                {"date": "2021-06-01", "value": 3.0},
+                {"date": "2022-01-01", "value": 4.0},
+            ],
+        }
+        json_path = _write_json(tmp_path / "MIXED.json", data)
+        out_path = tmp_path / "MIXED.png"
+        fig = plot_series(json_path, out_path)
+        lines = fig.axes[0].get_lines()
+        # old + new 모두 있으므로 2개 라인
+        assert len(lines) == 2
+
+
+# ---------------------------------------------------------------------------
+# chart.main
+# ---------------------------------------------------------------------------
+
+
+class TestChartMain:
+    def test_main_no_data_dir(self, tmp_path, monkeypatch, capsys):
+        """data 디렉토리 없으면 에러 메시지 출력."""
+        from fred.chart import main as chart_main
+
+        monkeypatch.chdir(tmp_path)
+        chart_main()
+        captured = capsys.readouterr()
+        assert "Error" in captured.out
+
+    def test_main_empty_data_dir(self, tmp_path, monkeypatch, capsys):
+        """data 디렉토리에 JSON이 없으면 에러 메시지 출력."""
+        from fred.chart import main as chart_main
+
+        (tmp_path / "data").mkdir()
+        monkeypatch.chdir(tmp_path)
+        chart_main()
+        captured = capsys.readouterr()
+        assert "Error" in captured.out
+
+    def test_main_generates_charts(self, tmp_path, monkeypatch, capsys):
+        """정상 실행 시 차트 생성."""
+        from fred.chart import main as chart_main
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        data = {
+            "series_id": "X",
+            "title": "X Series",
+            "observations": [{"date": "2024-01-01", "value": 1.0}],
+        }
+        (data_dir / "X.json").write_text(json.dumps(data))
+        monkeypatch.chdir(tmp_path)
+        chart_main()
+        captured = capsys.readouterr()
+        assert "차트 생성 완료" in captured.out
+        assert (tmp_path / "charts" / "X.png").exists()
+
+    def test_if_name_main_guard(self, tmp_path, monkeypatch):
+        """if __name__ == '__main__' 가드를 통해 main() 실행."""
+        import runpy
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        data = {
+            "series_id": "Z",
+            "title": "Z Series",
+            "observations": [{"date": "2024-01-01", "value": 1.0}],
+        }
+        (data_dir / "Z.json").write_text(json.dumps(data))
+        monkeypatch.chdir(tmp_path)
+        runpy.run_module("fred.chart", run_name="__main__")
+        assert (tmp_path / "charts" / "Z.png").exists()

@@ -1,15 +1,27 @@
+#!/usr/bin/env python3
 """경제지표 대시보드 생성 파이프라인.
 
 사용법:
     uv run python main.py --output-dir PATH
 """
 
-import argparse
 import os
+import sys
 from pathlib import Path
 
-# 스크립트가 위치한 디렉토리로 이동
-os.chdir(Path(__file__).resolve().parent)
+here = Path(__file__).resolve().parent
+venv_python = here / ".venv" / "bin" / "python"
+
+if not sys.prefix.startswith(str(here)):
+    os.execv(str(venv_python), [str(venv_python), __file__, *sys.argv[1:]])
+
+os.chdir(here)
+
+from dotenv import load_dotenv
+
+load_dotenv(here / ".env")
+
+import argparse
 
 
 def main() -> None:

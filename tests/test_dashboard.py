@@ -180,3 +180,46 @@ class TestBuildDashboard:
         assert 'src="charts/' in html
         # 절대경로가 아님
         assert 'src="/' not in html
+
+    def test_skips_derived_files(self, tmp_path, charts_dir):
+        """파생 파일(_1m, _1y)과 analysis.json은 시리즈 목록에서 제외."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        # 원본 파일
+        data = {
+            "series_id": "TEST",
+            "title": "Test",
+            "title_ko": "테스트",
+            "observations": [],
+        }
+        (data_dir / "TEST.json").write_text(json.dumps(data))
+        # 파생 파일 — 무시되어야 함
+        (data_dir / "TEST_1m.json").write_text(json.dumps(data))
+        (data_dir / "TEST_1y.json").write_text(json.dumps(data))
+        (data_dir / "analysis.json").write_text(json.dumps({"content": "x"}))
+
+        output = tmp_path / "output"
+        analysis = {"provider": "none", "content": "<p>x</p>", "generated_at": ""}
+        build_dashboard(
+            output_dir=output,
+            data_dir=data_dir,
+            charts_dir=charts_dir,
+            analysis=analysis,
+        )
+        html = (output / "index.html").read_text()
+        # TEST 시리즈만 카드에 포함 (1개)
+        assert html.count("charts/TEST.png") == 1
+
+
+class TestChartGuides:
+    def test_guide_newline_converted_to_br(self):
+        """CHART_GUIDES의 \\n이 HTML에서 <br>로 변환."""
+        from dashboard import generate_html
+
+        analysis = {"provider": "none", "content": "<p>x</p>", "generated_at": ""}
+        series_list = [
+            {"series_id": "DGS10", "title": "10-Year", "title_ko": "10년물"},
+        ]
+        html = generate_html(analysis, series_list)
+        assert "<br>" in html
+        assert "\\n" not in html  # raw \n이 남아있으면 안 됨

@@ -247,3 +247,168 @@ class TestGetObservations:
         mock_get.return_value = _mock_response(data)
         result = client.get_observations("DGS10")
         assert all(obs["value"] is None for obs in result)
+
+
+# ---------------------------------------------------------------------------
+# fred.client.main
+# ---------------------------------------------------------------------------
+
+
+class TestFredClientMain:
+    """fred.client.main() CLI 엔트리포인트 테스트."""
+
+    @patch("fred.client.requests.get")
+    def test_fetches_and_saves(self, mock_get, monkeypatch, tmp_path, capsys):
+        """데이터를 가져와서 JSON 파일로 저장."""
+        from fred.client import main as fred_main, EXAMPLE_SERIES
+
+        monkeypatch.setenv("FRED_API_KEY", "test-key")
+        monkeypatch.chdir(tmp_path)
+
+        # 시리즈 메타 응답
+        def mock_get_fn(url, params=None):
+            if "series/observations" in url:
+                return _mock_response(
+                    {
+                        "observations": [
+                            {"date": "2024-01-01", "value": "4.25"},
+                        ]
+                    }
+                )
+            elif "series/search" in url:
+                return _mock_response({"seriess": []})
+            else:
+                # series 메타
+                sid = params.get("series_id", "UNKNOWN")
+                return _mock_response(
+                    {
+                        "seriess": [
+                            {
+                                "id": sid,
+                                "title": f"Title {sid}",
+                            }
+                        ]
+                    }
+                )
+
+        mock_get.side_effect = mock_get_fn
+
+        fred_main()
+
+        captured = capsys.readouterr()
+        assert "완료" in captured.out
+        # 최소 1개 파일 생성 확인
+        data_dir = tmp_path / "data"
+        assert data_dir.exists()
+        json_files = list(data_dir.glob("*.json"))
+        assert len(json_files) == len(EXAMPLE_SERIES)
+
+    @patch("fred.client.requests.get")
+    def test_uses_cache(self, mock_get, monkeypatch, tmp_path, capsys):
+        """캐시 유효 시 API 호출 건너뛴다."""
+        import json as json_mod
+        from fred.client import main as fred_main, EXAMPLE_SERIES
+
+        monkeypatch.setenv("FRED_API_KEY", "test-key")
+        monkeypatch.chdir(tmp_path)
+
+        # 캐시 파일 미리 생성
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        for sid in EXAMPLE_SERIES:
+            data = {
+                "series_id": sid,
+                "title": f"Title {sid}",
+                "title_ko": f"한글 {sid}",
+                "observations": [{"date": "2024-01-01", "value": 1.0}],
+            }
+            (data_dir / f"{sid}.json").write_text(
+                json_mod.dumps(data, ensure_ascii=False)
+            )
+
+        fred_main()
+
+        captured = capsys.readouterr()
+        assert "캐시 사용" in captured.out
+        # API 호출 없어야 함
+        mock_get.assert_not_called()
+
+    @patch("fred.client.requests.get")
+    def test_prints_no_data(self, mock_get, monkeypatch, tmp_path, capsys):
+        """모든 관측값이 None이면 'no data' 출력."""
+        from fred.client import main as fred_main
+
+        monkeypatch.setenv("FRED_API_KEY", "test-key")
+        monkeypatch.chdir(tmp_path)
+
+        def mock_get_fn(url, params=None):
+            if "series/observations" in url:
+                return _mock_response(
+                    {
+                        "observations": [
+                            {"date": "2024-01-01", "value": "."},
+                        ]
+                    }
+                )
+            else:
+                sid = params.get("series_id", "X")
+                return _mock_response(
+                    {"seriess": [{"id": sid, "title": f"Title {sid}"}]}
+                )
+
+        mock_get.side_effect = mock_get_fn
+
+        fred_main()
+
+        captured = capsys.readouterr()
+        assert "no data" in captured.out
+
+    @patch("fred.client.requests.get")
+    def test_if_name_main_guard(self, mock_get, monkeypatch, tmp_path):
+        """if __name__ == '__main__' 가드를 통해 main() 실행."""
+        import runpy
+
+        monkeypatch.setenv("FRED_API_KEY", "test-key")
+        monkeypatch.chdir(tmp_path)
+
+        def mock_get_fn(url, params=None):
+            if "series/observations" in url:
+                return _mock_response(
+                    {"observations": [{"date": "2024-01-01", "value": "1.0"}]}
+                )
+            else:
+                sid = params.get("series_id", "X")
+                return _mock_response(
+                    {"seriess": [{"id": sid, "title": f"Title {sid}"}]}
+                )
+
+        mock_get.side_effect = mock_get_fn
+        runpy.run_module("fred.client", run_name="__main__")
+        assert (tmp_path / "data").exists()
+
+
+class TestFredModuleEntrypoint:
+    """python -m fred 엔트리포인트 테스트."""
+
+    @patch("fred.client.requests.get")
+    def test_run_as_module(self, mock_get, monkeypatch, tmp_path):
+        """python -m fred로 실행."""
+        import runpy
+
+        monkeypatch.setenv("FRED_API_KEY", "test-key")
+        monkeypatch.chdir(tmp_path)
+
+        def mock_get_fn(url, params=None):
+            if "series/observations" in url:
+                return _mock_response(
+                    {"observations": [{"date": "2024-01-01", "value": "1.0"}]}
+                )
+            else:
+                sid = params.get("series_id", "X")
+                return _mock_response(
+                    {"seriess": [{"id": sid, "title": f"Title {sid}"}]}
+                )
+
+        mock_get.side_effect = mock_get_fn
+        runpy.run_module("fred", run_name="__main__")
+        assert (tmp_path / "data").exists()
