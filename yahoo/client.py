@@ -127,11 +127,14 @@ class YahooClient:
         return results
 
 
-def main() -> None:
+def main(data_dir: str | Path | None = None) -> None:
     """Yahoo Finance 데이터 조회 및 data/*.json 저장."""
     from cache import is_fresh
 
-    data_dir = Path("data")
+    if data_dir is None:
+        data_dir = Path("data")
+    else:
+        data_dir = Path(data_dir)
     client = YahooClient()
 
     # 캐시 상태 미리 확인 (로그용)

@@ -24,6 +24,19 @@ PROMPT_TEMPLATE = """\
 
 HTML 형식으로 4개의 <p> 태그로 작성하세요. 제목 태그는 포함하지 마세요."""
 
+PROMPT_TEMPLATE_KR = """\
+당신은 한국 경제 분석 전문가입니다. 아래는 한국 주요 경제지표의 최근 1개월 데이터입니다.
+
+{data_summary}
+
+위 데이터를 종합적으로 분석하여 다음을 포함하는 한국 경제 동향 분석을 작성하세요:
+1. 현재 한국 경제 상황 요약 (금리, 환율, 주식시장, 물가)
+2. 주요 지표 간 상관관계 및 시사점 (한미 금리차, 원/달러 환율, 외국인 투자 등)
+3. 한국은행 통화정책 전망
+4. 향후 1개월~1분기 전망 (환율, KOSPI, 부동산, 물가 등 구체적으로)
+
+HTML 형식으로 4개의 <p> 태그로 작성하세요. 제목 태그는 포함하지 마세요."""
+
 
 # ---------------------------------------------------------------------------
 # 최근 데이터 추출
@@ -95,7 +108,7 @@ def extract_all_recent(
     for json_path in sorted(data_dir.glob("*.json")):
         stem = json_path.stem
         # 파생 파일 건너뛰기
-        if re.search(r"_\d+[my]$", stem) or stem == "analysis":
+        if re.search(r"_\d+[my]$", stem) or stem.startswith("analysis"):
             continue
 
         out_path = data_dir / f"{stem}_1m.json"
@@ -132,20 +145,22 @@ def _summarize_series(data: dict) -> str:
     )
 
 
-def build_prompt(recent_data_list: list[dict]) -> str:
+def build_prompt(recent_data_list: list[dict], market: str = "us") -> str:
     """최근 데이터 리스트로 AI 분석용 프롬프트를 생성한다.
 
     Args:
         recent_data_list: extract_all_recent()의 반환값
+        market: "us" 또는 "kr"
 
     Returns:
         프롬프트 문자열
     """
+    template = PROMPT_TEMPLATE_KR if market == "kr" else PROMPT_TEMPLATE
     if not recent_data_list:
-        return PROMPT_TEMPLATE.format(data_summary="(분석할 데이터가 없습니다)")
+        return template.format(data_summary="(분석할 데이터가 없습니다)")
 
     summaries = [_summarize_series(d) for d in recent_data_list]
-    return PROMPT_TEMPLATE.format(data_summary="\n".join(summaries))
+    return template.format(data_summary="\n".join(summaries))
 
 
 # ---------------------------------------------------------------------------
@@ -204,18 +219,21 @@ def _ensure_html(text: str) -> str:
 def analyze_with_ai(
     prompt: str,
     data_dir: str | Path = Path("data"),
+    market: str = "us",
 ) -> dict:
     """AI API로 경제 동향을 분석한다. Claude → ChatGPT → Gemini fallback.
 
     Args:
         prompt: 분석 프롬프트
         data_dir: analysis.json 캐시 디렉토리
+        market: "us" 또는 "kr" (캐시 파일 분리)
 
     Returns:
         {"provider": str, "content": str, "generated_at": str}
     """
     data_dir = Path(data_dir)
-    cache_path = data_dir / "analysis.json"
+    cache_name = "analysis_kr.json" if market == "kr" else "analysis.json"
+    cache_path = data_dir / cache_name
 
     cached = load_cached(cache_path)
     if cached is not None:

@@ -431,3 +431,46 @@ class TestCallGemini:
 
             result = _call_gemini("테스트 프롬프트")
         assert result == "<p>Gemini 분석</p>"
+
+
+# ---------------------------------------------------------------------------
+# 한국 시장 분석 지원
+# ---------------------------------------------------------------------------
+
+
+class TestKrPrompt:
+    def test_kr_prompt_template_exists(self):
+        """KR용 프롬프트 템플릿이 존재."""
+        from analysis import PROMPT_TEMPLATE_KR
+
+        assert "한국" in PROMPT_TEMPLATE_KR
+        assert "{data_summary}" in PROMPT_TEMPLATE_KR
+
+    def test_build_prompt_kr(self, data_dir):
+        """market='kr' 시 한국 프롬프트 사용."""
+        recent = extract_all_recent(data_dir)
+        prompt = build_prompt(recent, market="kr")
+        assert "한국" in prompt
+
+    def test_build_prompt_us_default(self, data_dir):
+        """market 미지정 시 기존 US 프롬프트."""
+        recent = extract_all_recent(data_dir)
+        prompt = build_prompt(recent)
+        assert "경제 분석 전문가" in prompt
+
+
+class TestAnalyzeWithAiMarket:
+    @patch("analysis._call_claude")
+    def test_kr_separate_cache(self, mock_claude, tmp_path):
+        """KR 분석은 별도 캐시 파일 사용."""
+        mock_claude.return_value = "<p>한국 분석</p>"
+        analyze_with_ai("prompt", data_dir=tmp_path, market="kr")
+        assert (tmp_path / "analysis_kr.json").exists()
+        assert not (tmp_path / "analysis.json").exists()
+
+    @patch("analysis._call_claude")
+    def test_us_cache_unchanged(self, mock_claude, tmp_path):
+        """US 분석은 기존 analysis.json 사용."""
+        mock_claude.return_value = "<p>US 분석</p>"
+        analyze_with_ai("prompt", data_dir=tmp_path, market="us")
+        assert (tmp_path / "analysis.json").exists()

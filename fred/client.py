@@ -132,7 +132,7 @@ TITLE_KO: dict[str, str] = {
 }
 
 
-def main() -> None:
+def main(data_dir: str | Path | None = None) -> None:
     """예제 시리즈의 최신 관측값을 출력하고 data/*.json에 저장."""
     import json
     from pathlib import Path
@@ -140,8 +140,11 @@ def main() -> None:
     from cache import load_cached
 
     client = None
-    data_dir = Path("data")
-    data_dir.mkdir(exist_ok=True)
+    if data_dir is None:
+        data_dir = Path("data")
+    else:
+        data_dir = Path(data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
 
     fetched = 0
     cached = 0

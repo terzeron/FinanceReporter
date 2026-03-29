@@ -223,3 +223,107 @@ class TestChartGuides:
         html = generate_html(analysis, series_list)
         assert "<br>" in html
         assert "\\n" not in html  # raw \n이 남아있으면 안 됨
+
+
+# ---------------------------------------------------------------------------
+# 탭 UI (US/KR)
+# ---------------------------------------------------------------------------
+
+
+class TestTabbedHtml:
+    def test_has_tab_buttons(self):
+        """US/KR 탭 버튼이 존재."""
+        from dashboard import generate_tabbed_html
+
+        us_analysis = {"provider": "claude", "content": "<p>US</p>", "generated_at": ""}
+        kr_analysis = {"provider": "claude", "content": "<p>KR</p>", "generated_at": ""}
+        us_series = [{"series_id": "DGS10", "title": "T", "title_ko": "T"}]
+        kr_series = [{"series_id": "KOSPI", "title": "K", "title_ko": "코스피"}]
+
+        html = generate_tabbed_html(us_analysis, us_series, kr_analysis, kr_series)
+        assert 'data-tab="us"' in html
+        assert 'data-tab="kr"' in html
+        assert "US 미국" in html
+        assert "KR 한국" in html
+
+    def test_us_tab_active_by_default(self):
+        """US 탭이 기본 활성."""
+        from dashboard import generate_tabbed_html
+
+        us_a = {"provider": "none", "content": "<p>US</p>", "generated_at": ""}
+        kr_a = {"provider": "none", "content": "<p>KR</p>", "generated_at": ""}
+        html = generate_tabbed_html(us_a, [], kr_a, [])
+        # US 탭 콘텐츠가 display:none이 아닌지 확인
+        assert 'id="tab-us"' in html
+        assert 'id="tab-kr"' in html
+
+    def test_contains_both_analyses(self):
+        """양쪽 분석 텍스트가 모두 포함."""
+        from dashboard import generate_tabbed_html
+
+        us_a = {"provider": "claude", "content": "<p>미국 분석</p>", "generated_at": ""}
+        kr_a = {"provider": "claude", "content": "<p>한국 분석</p>", "generated_at": ""}
+        html = generate_tabbed_html(us_a, [], kr_a, [])
+        assert "미국 분석" in html
+        assert "한국 분석" in html
+
+    def test_kr_chart_guides_used(self):
+        """KR 시리즈에 KR 가이드가 적용."""
+        from dashboard import generate_tabbed_html
+
+        us_a = {"provider": "none", "content": "<p>US</p>", "generated_at": ""}
+        kr_a = {"provider": "none", "content": "<p>KR</p>", "generated_at": ""}
+        kr_series = [{"series_id": "KOSPI", "title": "KOSPI", "title_ko": "코스피"}]
+        html = generate_tabbed_html(us_a, [], kr_a, kr_series)
+        # KOSPI 가이드가 HTML에 포함
+        assert "코스피" in html
+
+    def test_has_javascript(self):
+        """탭 전환 JavaScript 포함."""
+        from dashboard import generate_tabbed_html
+
+        us_a = {"provider": "none", "content": "<p>US</p>", "generated_at": ""}
+        kr_a = {"provider": "none", "content": "<p>KR</p>", "generated_at": ""}
+        html = generate_tabbed_html(us_a, [], kr_a, [])
+        assert "addEventListener" in html
+
+
+class TestBuildTabbedDashboard:
+    def test_creates_index_with_tabs(self, tmp_path, charts_dir, data_dir):
+        """탭 대시보드 index.html 생성."""
+        from dashboard import build_tabbed_dashboard
+
+        us_a = {"provider": "none", "content": "<p>US</p>", "generated_at": ""}
+        kr_a = {"provider": "none", "content": "<p>KR</p>", "generated_at": ""}
+        output = tmp_path / "output"
+
+        # KR 데이터/차트 디렉토리
+        kr_data = tmp_path / "kr_data"
+        kr_data.mkdir()
+        kr_charts = tmp_path / "kr_charts"
+        kr_charts.mkdir()
+        data = {
+            "series_id": "KOSPI",
+            "title": "KOSPI",
+            "title_ko": "코스피",
+            "observations": [],
+        }
+        (kr_data / "KOSPI.json").write_text(json.dumps(data))
+        (kr_charts / "KOSPI.png").write_bytes(b"fake png")
+        (kr_charts / "KOSPI_1y.png").write_bytes(b"fake png")
+
+        result = build_tabbed_dashboard(
+            output_dir=output,
+            us_data_dir=data_dir,
+            us_charts_dir=charts_dir,
+            us_analysis=us_a,
+            kr_data_dir=kr_data,
+            kr_charts_dir=kr_charts,
+            kr_analysis=kr_a,
+        )
+        assert result.exists()
+        html = result.read_text()
+        assert 'data-tab="us"' in html
+        assert 'data-tab="kr"' in html
+        assert "US 미국" in html
+        assert "KR 한국" in html

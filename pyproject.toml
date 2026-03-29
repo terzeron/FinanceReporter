@@ -8,6 +8,7 @@ dependencies = [
     "google-genai>=1.68.0",
     "matplotlib>=3.10.8",
     "openai>=2.30.0",
+    "pykrx>=1.2.4",
     "python-dotenv>=1.2.2",
     "requests>=2.33.0",
     "yfinance>=1.2.0",

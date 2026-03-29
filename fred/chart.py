@@ -140,7 +140,7 @@ def plot_all(data_dir: str | Path, output_dir: str | Path) -> list[Path]:
     for json_path in sorted(data_dir.glob("*.json")):
         stem = json_path.stem
         # 파생 파일(_1m, _1y) 및 analysis.json 건너뛰기
-        if re.search(r"_\d+[my]$", stem) or stem == "analysis":
+        if re.search(r"_\d+[my]$", stem) or stem.startswith("analysis"):
             continue
         # 전체 기간 차트
         full_path = output_dir / f"{json_path.stem}.png"
