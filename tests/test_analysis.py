@@ -6,11 +6,13 @@ from unittest.mock import patch
 import pytest
 
 from analysis import (
-    extract_recent_data,
-    extract_all_recent,
-    build_prompt,
-    analyze_with_ai,
+    US_SERIES_GROUPS,
+    KR_SERIES_GROUPS,
     FALLBACK_MESSAGE,
+    analyze_with_ai,
+    build_prompt,
+    extract_all_recent,
+    extract_recent_data,
 )
 
 
@@ -192,10 +194,10 @@ class TestBuildPrompt:
         assert "시리즈 BBB" in prompt or "BBB" in prompt
 
     def test_includes_data_summary(self, data_dir):
-        """프롬프트에 데이터 요약(시작값, 종료값 등)이 포함."""
+        """프롬프트에 그룹별 지표 방향성 요약이 포함."""
         recent = extract_all_recent(data_dir)
         prompt = build_prompt(recent)
-        assert "시작" in prompt or "종료" in prompt or "변동" in prompt
+        assert "상승" in prompt or "하락" in prompt or "보합" in prompt
 
     def test_returns_string(self, data_dir):
         """문자열 반환."""
@@ -474,3 +476,328 @@ class TestAnalyzeWithAiMarket:
         mock_claude.return_value = "<p>US 분석</p>"
         analyze_with_ai("prompt", data_dir=tmp_path, market="us")
         assert (tmp_path / "analysis.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# _summarize_series — 방향성 분기
+# ---------------------------------------------------------------------------
+
+
+class TestSummarizeSeriesDirections:
+    def _make_data(self, sid, values):
+        import datetime as dt
+
+        base = dt.datetime(2024, 1, 1)
+        obs = [
+            {"date": (base + dt.timedelta(days=i)).strftime("%Y-%m-%d"), "value": v}
+            for i, v in enumerate(values)
+        ]
+        return {"series_id": sid, "title": sid, "title_ko": sid, "observations": obs}
+
+    def test_rising_returns_상승(self):
+        """마지막 값이 첫 값보다 유의미하게 높으면 '상승' 반환."""
+        from analysis import _summarize_series
+
+        data = self._make_data("UP", [100.0, 105.0])  # +5%
+        assert "상승" in _summarize_series(data)
+
+    def test_declining_returns_하락(self):
+        """마지막 값이 첫 값보다 유의미하게 낮으면 '하락' 반환."""
+        from analysis import _summarize_series
+
+        data = self._make_data("DOWN", [100.0, 90.0])  # -10%
+        assert "하락" in _summarize_series(data)
+
+    def test_flat_returns_보합(self):
+        """변동폭이 0.5% 미만이면 '보합' 반환."""
+        from analysis import _summarize_series
+
+        data = self._make_data("FLAT", [100.0, 100.3])  # +0.3%
+        assert "보합" in _summarize_series(data)
+
+    def test_zero_start_value_no_division_error(self):
+        """첫 값이 0인 경우 ZeroDivisionError가 발생하지 않는다."""
+        from analysis import _summarize_series
+
+        data = self._make_data("ZERO", [0.0, 1.0])
+        result = _summarize_series(data)
+        assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# _format_grouped_data
+# ---------------------------------------------------------------------------
+
+
+class TestFormatGroupedData:
+    def _make_series(self, sid, start, end):
+        return {
+            "series_id": sid,
+            "title": sid,
+            "title_ko": f"지표 {sid}",
+            "observations": [
+                {"date": "2024-01-01", "value": start},
+                {"date": "2024-01-30", "value": end},
+            ],
+        }
+
+    def test_groups_series_with_headers(self):
+        """그룹 헤더(▶)와 시리즈가 포함된다."""
+        from analysis import _format_grouped_data
+
+        data = [self._make_series("DGS10", 4.0, 4.5)]
+        groups = {"금리": ["DGS10"]}
+        result = _format_grouped_data(data, groups)
+        assert "▶ 금리" in result
+        assert "DGS10" in result
+
+    def test_multiple_groups_each_have_header(self):
+        """여러 그룹이 각각 헤더와 함께 출력된다."""
+        from analysis import _format_grouped_data
+
+        data = [
+            self._make_series("DGS10", 4.0, 4.5),
+            self._make_series("UNRATE", 3.7, 3.9),
+        ]
+        groups = {"금리": ["DGS10"], "고용": ["UNRATE"]}
+        result = _format_grouped_data(data, groups)
+        assert "▶ 금리" in result
+        assert "▶ 고용" in result
+
+    def test_ungrouped_series_in_기타(self):
+        """그룹 정의에 없는 시리즈는 '기타' 그룹에 포함된다."""
+        from analysis import _format_grouped_data
+
+        data = [self._make_series("UNKNOWN", 1.0, 2.0)]
+        groups = {"금리": ["DGS10"]}
+        result = _format_grouped_data(data, groups)
+        assert "▶ 기타" in result
+        assert "UNKNOWN" in result
+
+    def test_no_기타_when_all_grouped(self):
+        """모든 시리즈가 그룹에 포함되면 '기타' 없음."""
+        from analysis import _format_grouped_data
+
+        data = [self._make_series("DGS10", 4.0, 4.5)]
+        groups = {"금리": ["DGS10"]}
+        result = _format_grouped_data(data, groups)
+        assert "기타" not in result
+
+    def test_empty_data_returns_no_data_message(self):
+        """데이터가 없으면 안내 메시지 반환."""
+        from analysis import _format_grouped_data
+
+        result = _format_grouped_data([], {})
+        assert "분석할 데이터가 없습니다" in result
+
+    def test_group_series_not_in_data_skipped(self):
+        """그룹에 정의됐지만 데이터에 없는 시리즈는 조용히 건너뛴다."""
+        from analysis import _format_grouped_data
+
+        data = [self._make_series("DGS10", 4.0, 4.5)]
+        groups = {"금리": ["DGS10", "MISSING_ID"]}
+        result = _format_grouped_data(data, groups)
+        assert "MISSING_ID" not in result
+        assert "DGS10" in result
+
+    def test_series_not_duplicated_across_groups(self):
+        """동일 시리즈가 두 그룹에 정의돼도 첫 그룹에만 출력되고 두 번째 그룹은 생략된다."""
+        from analysis import _format_grouped_data
+
+        data = [self._make_series("DGS10", 4.0, 4.5)]
+        groups = {"그룹A": ["DGS10"], "그룹B": ["DGS10"]}
+        result = _format_grouped_data(data, groups)
+        # DGS10이 그룹A에 할당됐으므로 그룹B 헤더는 나오지 않는다
+        assert "▶ 그룹A" in result
+        assert "▶ 그룹B" not in result
+
+
+# ---------------------------------------------------------------------------
+# _format_news
+# ---------------------------------------------------------------------------
+
+
+class TestFormatNews:
+    def test_empty_list_returns_no_news_message(self):
+        """빈 리스트이면 '뉴스 없음' 메시지 반환."""
+        from analysis import _format_news
+
+        result = _format_news([])
+        assert "뉴스 없음" in result
+
+    def test_formats_source_title_date_text(self):
+        """출처·제목·날짜·본문이 포함된 형식으로 변환된다."""
+        from analysis import _format_news
+
+        articles = [
+            {
+                "source": "Reuters",
+                "title": "Fed holds rates",
+                "text": "The Fed kept rates steady.",
+                "published": "2024-04-15",
+            }
+        ]
+        result = _format_news(articles)
+        assert "[Reuters]" in result
+        assert "Fed holds rates" in result
+        assert "2024-04-15" in result
+        assert "The Fed kept rates steady." in result
+
+    def test_article_without_date_still_formatted(self):
+        """날짜 없는 기사도 출처·제목이 포함된다."""
+        from analysis import _format_news
+
+        articles = [
+            {
+                "source": "CNBC",
+                "title": "Markets rally",
+                "text": "Stocks rose.",
+                "published": "",
+            }
+        ]
+        result = _format_news(articles)
+        assert "[CNBC]" in result
+        assert "Markets rally" in result
+
+    def test_falls_back_to_summary_when_text_empty(self):
+        """text가 빈 문자열이면 summary를 사용한다."""
+        from analysis import _format_news
+
+        articles = [
+            {
+                "source": "Bloomberg",
+                "title": "Oil prices",
+                "text": "",
+                "summary": "Oil fell sharply.",
+                "published": "2024-01-01",
+            }
+        ]
+        result = _format_news(articles)
+        assert "Oil fell sharply." in result
+
+    def test_multiple_articles_all_included(self):
+        """여러 기사가 모두 출력에 포함된다."""
+        from analysis import _format_news
+
+        articles = [
+            {
+                "source": "Reuters",
+                "title": "A",
+                "text": "text A",
+                "published": "2024-01-01",
+            },
+            {
+                "source": "CNBC",
+                "title": "B",
+                "text": "text B",
+                "published": "2024-01-02",
+            },
+        ]
+        result = _format_news(articles)
+        assert "Reuters" in result
+        assert "CNBC" in result
+
+
+# ---------------------------------------------------------------------------
+# build_prompt — news_list 파라미터
+# ---------------------------------------------------------------------------
+
+
+class TestBuildPromptWithNews:
+    def test_news_included_when_provided(self, data_dir):
+        """news_list 제공 시 뉴스 출처·제목이 프롬프트에 포함된다."""
+        recent = extract_all_recent(data_dir)
+        news = [
+            {
+                "source": "Reuters",
+                "title": "Fed holds rates",
+                "text": "The Fed...",
+                "published": "2024-04-15",
+            }
+        ]
+        prompt = build_prompt(recent, news_list=news)
+        assert "Reuters" in prompt
+        assert "Fed holds rates" in prompt
+
+    def test_no_news_shows_no_news_message(self, data_dir):
+        """news_list=None 시 '뉴스 없음' 안내가 포함된다."""
+        recent = extract_all_recent(data_dir)
+        prompt = build_prompt(recent, news_list=None)
+        assert "뉴스 없음" in prompt
+
+    def test_news_changes_prompt_content(self, data_dir):
+        """뉴스 유무에 따라 프롬프트 내용이 달라진다."""
+        recent = extract_all_recent(data_dir)
+        no_news = build_prompt(recent, news_list=None)
+        with_news = build_prompt(
+            recent,
+            news_list=[
+                {
+                    "source": "CNBC",
+                    "title": "Markets",
+                    "text": "Stocks rise.",
+                    "published": "2024-01-01",
+                }
+            ],
+        )
+        assert no_news != with_news
+
+    def test_grouped_data_header_in_prompt(self, data_dir):
+        """그룹 헤더(▶)가 프롬프트에 포함된다."""
+        recent = extract_all_recent(data_dir)
+        prompt = build_prompt(recent)
+        assert "▶" in prompt
+
+    def test_kr_news_uses_kr_template(self, data_dir):
+        """market='kr' + news_list 조합 시 KR 템플릿이 적용된다."""
+        recent = extract_all_recent(data_dir)
+        news = [
+            {
+                "source": "Reuters",
+                "title": "Korea growth",
+                "text": "KR GDP...",
+                "published": "2024-01-01",
+            }
+        ]
+        prompt = build_prompt(recent, market="kr", news_list=news)
+        assert "한국" in prompt
+        assert "Reuters" in prompt
+
+
+# ---------------------------------------------------------------------------
+# US_SERIES_GROUPS / KR_SERIES_GROUPS 구조 검증
+# ---------------------------------------------------------------------------
+
+
+class TestSeriesGroups:
+    def test_us_groups_include_precious_metals_together(self):
+        """US 그룹에서 금·은·동이 같은 그룹에 배치된다."""
+        metals = {"GOLD", "SILVER", "COPPER"}
+        for group_ids in US_SERIES_GROUPS.values():
+            if metals & set(group_ids):
+                assert metals.issubset(set(group_ids)), (
+                    "GOLD·SILVER·COPPER는 동일 그룹에 있어야 한다"
+                )
+                return
+        raise AssertionError("GOLD·SILVER·COPPER가 US_SERIES_GROUPS에 없음")
+
+    def test_us_groups_contain_yahoo_series(self):
+        """US 그룹에 Yahoo Finance 시리즈(TNX, VIX, DXY, WTI)가 포함된다."""
+        all_ids = {sid for ids in US_SERIES_GROUPS.values() for sid in ids}
+        for sid in ("TNX", "VIX", "DXY", "WTI"):
+            assert sid in all_ids, f"{sid} not in US_SERIES_GROUPS"
+
+    def test_kr_groups_contain_stock_market_series(self):
+        """KR 그룹에 KOSPI·KOSDAQ이 포함된다."""
+        all_ids = {sid for ids in KR_SERIES_GROUPS.values() for sid in ids}
+        assert "KOSPI" in all_ids
+        assert "KOSDAQ" in all_ids
+
+    def test_no_duplicate_series_ids_within_market(self):
+        """같은 시장 그룹 내에서 동일 series_id가 중복되지 않는다."""
+        for groups, label in [(US_SERIES_GROUPS, "US"), (KR_SERIES_GROUPS, "KR")]:
+            seen: set[str] = set()
+            for ids in groups.values():
+                for sid in ids:
+                    assert sid not in seen, f"{label}: {sid} duplicated"
+                    seen.add(sid)

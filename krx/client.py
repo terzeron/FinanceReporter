@@ -1,18 +1,16 @@
-"""KRX (한국거래소) 데이터 클라이언트 — yfinance + pykrx 래퍼."""
+"""KRX (한국거래소) 지수 데이터 클라이언트 — yfinance 래퍼."""
 
 from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import yfinance
-from pykrx import stock
 
 
 class KrxClient:
-    """KRX 데이터 래퍼. 지수는 yfinance, 투자자/공매도는 pykrx를 사용한다."""
+    """KRX 지수 데이터 래퍼. yfinance를 사용한다."""
 
     def get_index_history(
         self,
@@ -44,77 +42,12 @@ class KrxClient:
                     "value": value,
                 }
             )
-        return observations
 
-    def get_trading_by_investor(
-        self,
-        market: str,
-        investor: str,
-        start: str | None = None,
-        end: str | None = None,
-    ) -> list[dict]:
-        """투자자별 순매수 금액을 observations 리스트로 반환 (pykrx).
+        # yfinance는 장 마감 전 당일 행을 NaN 종가로 반환하는 경우가 있다.
+        # 그대로 두면 대시보드 최신값이 None으로 표시되므로 후행 결측치만 버린다.
+        while observations and observations[-1]["value"] is None:
+            observations.pop()
 
-        Args:
-            market: "KOSPI" 또는 "KOSDAQ"
-            investor: "개인", "외국인", "기관계" 등
-            start/end: YYYYMMDD
-
-        Returns:
-            [{"date": "YYYY-MM-DD", "value": float}, ...]
-        """
-        if end is None:
-            end = datetime.now().strftime("%Y%m%d")
-        if start is None:
-            start = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
-
-        df = stock.get_market_trading_value_by_date(start, end, market)
-        if df.empty or investor not in df.columns:
-            return []
-
-        observations: list[dict] = []
-        for date, row in df.iterrows():
-            observations.append(
-                {
-                    "date": date.strftime("%Y-%m-%d"),
-                    "value": float(row[investor]),
-                }
-            )
-        return observations
-
-    def get_short_selling(
-        self,
-        market: str,
-        start: str | None = None,
-        end: str | None = None,
-    ) -> list[dict]:
-        """공매도 거래대금을 observations 리스트로 반환 (pykrx).
-
-        Args:
-            market: "KOSPI" 또는 "KOSDAQ"
-            start/end: YYYYMMDD
-
-        Returns:
-            [{"date": "YYYY-MM-DD", "value": float}, ...]
-        """
-        if end is None:
-            end = datetime.now().strftime("%Y%m%d")
-        if start is None:
-            start = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
-
-        df = stock.get_shorting_value_by_date(start, end, market)
-        if df.empty:
-            return []
-
-        col = "공매도거래대금" if "공매도거래대금" in df.columns else df.columns[0]
-        observations: list[dict] = []
-        for date, row in df.iterrows():
-            observations.append(
-                {
-                    "date": date.strftime("%Y-%m-%d"),
-                    "value": float(row[col]),
-                }
-            )
         return observations
 
     def fetch_all(self, data_dir: str | Path | None = None) -> list[dict]:
@@ -131,16 +64,9 @@ class KrxClient:
                     results.append(cached)
                     continue
 
-            fetch_type = series["fetch_type"]
             try:
-                if fetch_type == "index":
+                if series["fetch_type"] == "index":
                     observations = self.get_index_history(series["symbol"])
-                elif fetch_type == "trading":
-                    observations = self.get_trading_by_investor(
-                        series["market"], series["investor"]
-                    )
-                elif fetch_type == "shorting":
-                    observations = self.get_short_selling(series["market"])
                 else:
                     observations = []
             except Exception as e:
@@ -187,31 +113,6 @@ KRX_SERIES = [
         "title_ko": "코스닥",
         "fetch_type": "index",
         "symbol": "^KQ11",
-    },
-    # 투자자별 매매 (pykrx)
-    {
-        "series_id": "KOSPI_FOREIGN",
-        "title": "KOSPI Foreign Investor Net Purchase",
-        "title_ko": "코스피 외국인 순매수",
-        "fetch_type": "trading",
-        "market": "KOSPI",
-        "investor": "외국인",
-    },
-    {
-        "series_id": "KOSPI_INST",
-        "title": "KOSPI Institutional Net Purchase",
-        "title_ko": "코스피 기관 순매수",
-        "fetch_type": "trading",
-        "market": "KOSPI",
-        "investor": "기관계",
-    },
-    # 공매도 (pykrx)
-    {
-        "series_id": "KOSPI_SHORT",
-        "title": "KOSPI Short Selling Amount",
-        "title_ko": "코스피 공매도 거래대금",
-        "fetch_type": "shorting",
-        "market": "KOSPI",
     },
 ]
 

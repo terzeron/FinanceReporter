@@ -148,6 +148,7 @@ def main(data_dir: str | Path | None = None) -> None:
 
     fetched = 0
     cached = 0
+    failed = 0
     for sid in EXAMPLE_SERIES:
         out_path = data_dir / f"{sid}.json"
         data = load_cached(out_path)
@@ -158,8 +159,16 @@ def main(data_dir: str | Path | None = None) -> None:
 
         if client is None:
             client = FredClient()
-        meta = client.get_series(sid)
-        observations = client.get_observations(sid)
+
+        # 시리즈 단위로 격리한다. 일시적 502 하나가 뒤따르는 시리즈 수집을
+        # 통째로 건너뛰게 만들면 안 된다. 실패 시 기존 파일은 그대로 둔다.
+        try:
+            meta = client.get_series(sid)
+            observations = client.get_observations(sid)
+        except Exception as e:
+            print(f"  ⚠️  {sid} 수집 실패: {e}")
+            failed += 1
+            continue
 
         # 최신 관측값 출력
         latest = None
@@ -182,7 +191,10 @@ def main(data_dir: str | Path | None = None) -> None:
         out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         fetched += 1
 
-    print(f"\n완료: {fetched}개 갱신, {cached}개 캐시 사용 → {data_dir}/")
+    summary = f"\n완료: {fetched}개 갱신, {cached}개 캐시 사용"
+    if failed:
+        summary += f", {failed}개 실패"
+    print(f"{summary} → {data_dir}/")
 
 
 if __name__ == "__main__":

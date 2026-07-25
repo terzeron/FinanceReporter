@@ -33,3 +33,4 @@ htmlcov/
 
 # Ruff
 .ruff_cache/
+.gitnexus

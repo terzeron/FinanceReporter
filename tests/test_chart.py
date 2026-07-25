@@ -235,22 +235,129 @@ class TestPlotAll:
 
     def test_skips_derived_files(self, tmp_path):
         """파생 파일(_1m, _1y)과 analysis.json은 건너뛴다."""
-        # 원본 파일
         data = {
             "series_id": "A",
             "title": "Series A",
             "observations": [{"date": "2024-01-01", "value": 1.0}],
         }
         (tmp_path / "A.json").write_text(json.dumps(data))
-        # 파생 파일들 — 이들은 무시되어야 함
         (tmp_path / "A_1m.json").write_text(json.dumps(data))
         (tmp_path / "A_1y.json").write_text(json.dumps(data))
         (tmp_path / "analysis.json").write_text("{}")
 
         out_dir = tmp_path / "charts"
         results = plot_all(tmp_path, out_dir)
-        # 원본 1개 × 2 (전체 + 1년) = 2개만 생성
         assert len(results) == 2
+
+    def test_series_order_controls_chart_sequence(self, tmp_path):
+        """series_order 지정 시 해당 순서로 차트가 생성된다."""
+        for sid in ("GOLD", "SILVER", "COPPER"):
+            (tmp_path / f"{sid}.json").write_text(
+                json.dumps(
+                    {
+                        "series_id": sid,
+                        "title": sid,
+                        "observations": [{"date": "2024-01-01", "value": 1.0}],
+                    }
+                )
+            )
+        out_dir = tmp_path / "charts"
+        results = plot_all(tmp_path, out_dir, series_order=["GOLD", "SILVER", "COPPER"])
+        stems = [p.stem.replace("_1y", "") for p in results]
+        gold_idx = stems.index("GOLD")
+        silver_idx = stems.index("SILVER")
+        copper_idx = stems.index("COPPER")
+        assert gold_idx < silver_idx < copper_idx
+
+    def test_series_order_unlisted_appended_alphabetically(self, tmp_path):
+        """series_order 미포함 파일은 알파벳순으로 뒤에 추가된다."""
+        for sid in ("GOLD", "AAA", "ZZZ"):
+            (tmp_path / f"{sid}.json").write_text(
+                json.dumps(
+                    {
+                        "series_id": sid,
+                        "title": sid,
+                        "observations": [{"date": "2024-01-01", "value": 1.0}],
+                    }
+                )
+            )
+        out_dir = tmp_path / "charts"
+        results = plot_all(tmp_path, out_dir, series_order=["GOLD"])
+        stems = [p.stem.replace("_1y", "") for p in results]
+        assert stems.index("GOLD") < stems.index("AAA")
+        assert stems.index("GOLD") < stems.index("ZZZ")
+
+    def test_series_order_none_falls_back_to_alphabetical(self, data_dir, tmp_path):
+        """series_order=None이면 기존 알파벳 순서로 처리한다."""
+        out_dir = tmp_path / "charts"
+        results = plot_all(data_dir, out_dir, series_order=None)
+        assert len(results) == 4  # data_dir fixture의 TEST01, TEST02
+
+    def test_smooth_series_generates_chart(self, tmp_path):
+        """smooth_series에 포함된 시리즈는 차트가 생성된다."""
+        data = {
+            "series_id": "KR_BSI",
+            "title": "BSI",
+            "observations": [
+                {"date": f"2024-0{m}-01", "value": float(m * 10)} for m in range(1, 7)
+            ],
+        }
+        (tmp_path / "KR_BSI.json").write_text(json.dumps(data))
+        out_dir = tmp_path / "charts"
+        results = plot_all(tmp_path, out_dir, smooth_series={"KR_BSI"})
+        assert (out_dir / "KR_BSI.png").exists()
+        assert len(results) == 2
+
+    def test_skips_empty_series_in_plot_all(self, tmp_path):
+        """관측값이 없는 시리즈는 차트를 건너뛴다."""
+        (tmp_path / "EMPTY.json").write_text(
+            json.dumps({"series_id": "EMPTY", "title": "E", "observations": []})
+        )
+        (tmp_path / "NORMAL.json").write_text(
+            json.dumps(
+                {
+                    "series_id": "NORMAL",
+                    "title": "N",
+                    "observations": [{"date": "2024-01-01", "value": 1.0}],
+                }
+            )
+        )
+        out_dir = tmp_path / "charts"
+        results = plot_all(tmp_path, out_dir)
+        assert not (out_dir / "EMPTY.png").exists()
+        assert (out_dir / "NORMAL.png").exists()
+        assert len(results) == 2
+
+    def test_skips_all_null_observations(self, tmp_path):
+        """모든 값이 None인 시리즈도 차트를 건너뛴다."""
+        (tmp_path / "NULL.json").write_text(
+            json.dumps(
+                {
+                    "series_id": "NULL",
+                    "title": "N",
+                    "observations": [{"date": "2024-01-01", "value": None}],
+                }
+            )
+        )
+        out_dir = tmp_path / "charts"
+        results = plot_all(tmp_path, out_dir)
+        assert results == []
+
+    def test_smooth_sigma_full_chart_gray_orange(self, tmp_path, long_range_data):
+        """smooth_sigma 전체 차트는 일반 차트와 동일하게 회색+주황 2라인으로 표시된다."""
+        json_path = _write_json(tmp_path / "LONG01.json", long_range_data)
+        out_path = tmp_path / "LONG01_smooth.png"
+        fig = plot_series(json_path, out_path, smooth_sigma=2.0)
+        ax = fig.axes[0]
+        assert len(ax.get_lines()) == 2  # 회색(1년 이전) + 주황(최근 1년)
+
+    def test_smooth_sigma_recent_chart_single_line(self, tmp_path, long_range_data):
+        """smooth_sigma 최근 1년 차트는 주황 단일 라인."""
+        json_path = _write_json(tmp_path / "LONG01.json", long_range_data)
+        out_path = tmp_path / "LONG01_smooth_1y.png"
+        fig = plot_series(json_path, out_path, recent_months=12, smooth_sigma=2.0)
+        ax = fig.axes[0]
+        assert len(ax.get_lines()) == 1
 
 
 class TestPlotSeriesEdgeCases:

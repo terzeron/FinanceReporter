@@ -11,6 +11,11 @@ import requests
 
 BASE_URL = "http://ecos.bok.or.kr/api/StatisticSearch"
 
+# 한 번에 조회할 최대 행 수. ECOS는 구간을 앞에서부터 잘라 반환하므로,
+# 상한이 모자라면 가장 최신 데이터가 조용히 누락된다.
+# 2000년 이후 일별 시리즈는 2026년 기준 약 9,700행이다.
+MAX_ROWS = 100000
+
 # 분기 → 월 매핑
 _QUARTER_TO_MONTH = {"Q1": "01", "Q2": "04", "Q3": "07", "Q4": "10"}
 
@@ -50,7 +55,7 @@ class EcosClient:
         if item_code2:
             item_path = f"{item_code}/{item_code2}"
         url = (
-            f"{BASE_URL}/{self._api_key}/json/kr/1/10000"
+            f"{BASE_URL}/{self._api_key}/json/kr/1/{MAX_ROWS}"
             f"/{stat_code}/{cycle}/{start}/{end}/{item_path}"
         )
         resp = requests.get(url, timeout=30)
@@ -86,14 +91,21 @@ class EcosClient:
                     results.append(cached)
                     continue
 
-            observations = self.get_observations(
-                stat_code=series["stat_code"],
-                cycle=series["cycle"],
-                start=series["start"],
-                end=series["end"],
-                item_code=series["item_code"],
-                item_code2=series.get("item_code2"),
-            )
+            # 시리즈 단위로 격리한다. 하나가 실패해도 나머지 수집은 계속하고,
+            # 기존 파일을 빈 데이터로 덮어쓰지 않도록 결과에서 제외한다.
+            try:
+                observations = self.get_observations(
+                    stat_code=series["stat_code"],
+                    cycle=series["cycle"],
+                    start=series["start"],
+                    end=series["end"],
+                    item_code=series["item_code"],
+                    item_code2=series.get("item_code2"),
+                )
+            except Exception as e:
+                print(f"  ⚠️  {sid} 수집 실패: {e}")
+                continue
+
             data = {
                 "series_id": sid,
                 "title": series["title"],
@@ -163,11 +175,13 @@ def _parse_row(row: dict) -> dict:
 ECOS_SERIES = [
     # 금리
     {
+        # 월 주기 시리즈는 해당 월 마감 후에 공표되어 월 중 금리 변경이
+        # 다음 달까지 반영되지 않으므로 일 주기를 쓴다.
         "stat_code": "722Y001",
         "item_code": "0101000",
-        "cycle": "M",
-        "start": "200001",
-        "end": "209912",
+        "cycle": "D",
+        "start": "20000101",
+        "end": "20991231",
         "series_id": "BOK_BASE_RATE",
         "title": "Bank of Korea Base Rate",
         "title_ko": "한국은행 기준금리",
@@ -246,7 +260,9 @@ ECOS_SERIES = [
     },
     # 통화·유동성
     {
-        "stat_code": "101Y004",
+        # 구지표(101Y004)는 2004-09에 공표 종료. 신지표 동일 위치인
+        # 161Y006(M2 상품별 구성내역, 평잔·원계열)을 쓴다. 2003-10부터 제공.
+        "stat_code": "161Y006",
         "item_code": "BBHA00",
         "cycle": "M",
         "start": "200001",

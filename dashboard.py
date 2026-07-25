@@ -166,10 +166,25 @@ def build_dashboard(
     # 차트 이미지 복사
     out_charts = output_dir / "charts"
     out_charts.mkdir(exist_ok=True)
-    for png in charts_dir.glob("*.png"):
-        shutil.copy2(png, out_charts / png.name)
+    _sync_charts(charts_dir, out_charts)
 
     return index_path
+
+
+def _sync_charts(src_dir: Path, out_dir: Path) -> None:
+    """차트 PNG를 복사하고, 소스에 없는 PNG는 출력 디렉토리에서 제거한다.
+
+    복사만 하면 지표를 제거하거나 이름을 바꿀 때마다 배포 디렉토리에
+    고아 PNG가 영구히 남는다.
+    """
+    current = set()
+    for png in src_dir.glob("*.png"):
+        shutil.copy2(png, out_dir / png.name)
+        current.add(png.name)
+
+    for png in out_dir.glob("*.png"):
+        if png.name not in current:
+            png.unlink()
 
 
 # ---------------------------------------------------------------------------
@@ -200,9 +215,6 @@ CHART_GUIDES_KR: dict[str, str] = {
     "KR_HOUSING_PRICE": "▲ 상승 → 주택시장 과열, 규제 강화 가능성\n▼ 하락 → 주택시장 냉각, 규제 완화 기대",
     "KOSPI": "▲ 상승 → 경기 회복 기대, 외국인 매수세\n▼ 하락 → 경기 둔화 우려, 자본 유출",
     "KOSDAQ": "▲ 상승 → 성장주 선호, 위험선호 심리\n▼ 하락 → 위험회피, 중소형주 약세",
-    "KOSPI_FOREIGN": "▲ 순매수 → 외국인 낙관, 원화 강세 요인\n▼ 순매도 → 외국인 이탈, 원화 약세 압력",
-    "KOSPI_INST": "▲ 순매수 → 기관 낙관, 시장 안정\n▼ 순매도 → 기관 차익실현, 수급 부담",
-    "KOSPI_SHORT": "▲ 증가 → 하락 베팅 확대, 변동성 확대\n▼ 감소 → 하락 베팅 축소, 시장 안정",
 }
 
 
@@ -345,25 +357,36 @@ def generate_tabbed_html(
     )
 
 
-def _collect_series(data_dir: Path) -> list[dict]:
+def _collect_series(
+    data_dir: Path,
+    series_order: list[str] | None = None,
+) -> list[dict]:
     """data_dir에서 시리즈 메타데이터를 수집한다."""
     import re
 
-    series_list: list[dict] = []
-    for json_path in sorted(data_dir.glob("*.json")):
+    by_id: dict[str, dict] = {}
+    for json_path in data_dir.glob("*.json"):
         stem = json_path.stem
         if re.search(r"_\d+[my]$", stem) or stem.startswith("analysis"):
             continue
         with json_path.open() as f:
             data = json.load(f)
-        series_list.append(
-            {
-                "series_id": data["series_id"],
-                "title": data["title"],
-                "title_ko": data.get("title_ko"),
-            }
+        if not any(o["value"] is not None for o in data.get("observations", [])):
+            continue
+        by_id[data["series_id"]] = {
+            "series_id": data["series_id"],
+            "title": data["title"],
+            "title_ko": data.get("title_ko"),
+        }
+
+    if series_order:
+        ordered = [by_id[sid] for sid in series_order if sid in by_id]
+        remaining = sorted(
+            (s for sid, s in by_id.items() if sid not in set(series_order)),
+            key=lambda s: s["series_id"],
         )
-    return series_list
+        return ordered + remaining
+    return sorted(by_id.values(), key=lambda s: s["series_id"])
 
 
 def build_tabbed_dashboard(
@@ -374,13 +397,15 @@ def build_tabbed_dashboard(
     kr_data_dir: str | Path,
     kr_charts_dir: str | Path,
     kr_analysis: dict,
+    us_series_order: list[str] | None = None,
+    kr_series_order: list[str] | None = None,
 ) -> Path:
     """US/KR 탭 대시보드를 출력 디렉토리에 생성한다."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    us_series = _collect_series(Path(us_data_dir))
-    kr_series = _collect_series(Path(kr_data_dir))
+    us_series = _collect_series(Path(us_data_dir), series_order=us_series_order)
+    kr_series = _collect_series(Path(kr_data_dir), series_order=kr_series_order)
 
     html = generate_tabbed_html(us_analysis, us_series, kr_analysis, kr_series)
     index_path = output_dir / "index.html"
@@ -390,7 +415,10 @@ def build_tabbed_dashboard(
     for subdir, charts_dir in [("us", us_charts_dir), ("kr", kr_charts_dir)]:
         out_charts = output_dir / "charts" / subdir
         out_charts.mkdir(parents=True, exist_ok=True)
-        for png in Path(charts_dir).glob("*.png"):
-            shutil.copy2(png, out_charts / png.name)
+        _sync_charts(Path(charts_dir), out_charts)
+
+    # us/kr 분리 이전의 flat 레이아웃 잔재를 정리한다.
+    for png in (output_dir / "charts").glob("*.png"):
+        png.unlink()
 
     return index_path

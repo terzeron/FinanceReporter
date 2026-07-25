@@ -1,10 +1,11 @@
 """ECOS (한국은행 경제통계시스템) API 클라이언트 테스트."""
 
+import json
 from unittest.mock import patch, MagicMock
 
 import pytest
 
-from ecos.client import EcosClient, ECOS_SERIES
+from ecos.client import EcosClient, ECOS_SERIES, MAX_ROWS
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +159,18 @@ class TestGetObservations:
         assert "0101000" in url
 
     @patch("ecos.client.requests.get")
+    def test_row_limit_covers_full_daily_history(self, mock_get, client):
+        """조회 건수 상한이 2000년 이후 일별 시리즈를 담을 만큼 커야 한다.
+
+        ECOS는 요청 구간을 앞에서부터 잘라 반환하므로 상한이 모자라면
+        가장 최신 데이터가 조용히 누락된다.
+        """
+        assert MAX_ROWS >= 20000
+        mock_get.return_value = _mock_response(SAMPLE_DAILY_RESPONSE)
+        client.get_observations("722Y001", "D", "20000101", "20991231", "0101000")
+        assert f"/1/{MAX_ROWS}/" in mock_get.call_args[0][0]
+
+    @patch("ecos.client.requests.get")
     def test_empty_response(self, mock_get, client):
         """빈 응답은 빈 리스트 반환."""
         data = {"StatisticSearch": {"list_total_count": 0, "row": []}}
@@ -217,6 +230,35 @@ class TestEcosSeries:
         assert "KR_EXPORT" in ids
         assert "KR_PPI" in ids
 
+    def test_base_rate_uses_daily_cycle(self):
+        """기준금리는 일 주기여야 한다.
+
+        월 주기 시리즈는 해당 월이 끝난 뒤에 공표되므로, 월 중에 이루어진
+        기준금리 변경이 다음 달까지 대시보드에 반영되지 않는다.
+        """
+        base_rate = next(s for s in ECOS_SERIES if s["series_id"] == "BOK_BASE_RATE")
+        assert base_rate["cycle"] == "D"
+
+    def test_m2_uses_current_indicator_table(self):
+        """M2는 신지표 통계표를 써야 한다.
+
+        구지표(1.7.x, 101Y004 등)는 2004-09에 공표가 끝나 최신 데이터가
+        없다. 신지표(1.1.x, 161Y006 = 평잔·원계열)로 조회한다.
+        """
+        m2 = next(s for s in ECOS_SERIES if s["series_id"] == "KR_M2")
+        assert m2["stat_code"] == "161Y006"
+
+    def test_period_format_matches_cycle(self):
+        """cycle에 맞는 start/end 포맷을 쓴다 (D=YYYYMMDD, M=YYYYMM)."""
+        expected_len = {"D": 8, "M": 6, "A": 4}
+        for s in ECOS_SERIES:
+            length = expected_len[s["cycle"]]
+            for field in ("start", "end"):
+                assert len(s[field]) == length, (
+                    f"{s['series_id']}: cycle={s['cycle']}인데 "
+                    f"{field}={s[field]!r} (길이 {length} 필요)"
+                )
+
 
 # ---------------------------------------------------------------------------
 # fetch_all
@@ -242,6 +284,53 @@ class TestFetchAll:
         client.fetch_all(data_dir=tmp_path)
         json_files = list(tmp_path.glob("*.json"))
         assert len(json_files) == len(ECOS_SERIES)
+
+    @patch("ecos.client.requests.get")
+    def test_one_series_failure_does_not_abort_rest(self, mock_get, client, tmp_path):
+        """시리즈 1개가 실패해도 나머지는 계속 수집한다."""
+
+        def side_effect(url, timeout=None):
+            if "722Y001" in url:
+                raise RuntimeError("502 Server Error: Bad Gateway")
+            return _mock_response(SAMPLE_STAT_RESPONSE)
+
+        mock_get.side_effect = side_effect
+        results = client.fetch_all(data_dir=tmp_path)
+
+        by_id = {d["series_id"]: d for d in results}
+        assert "BOK_BASE_RATE" not in by_id
+        assert len(results) == len(ECOS_SERIES) - 1
+        assert by_id["KR_CPI"]["observations"] != []
+
+    @patch("ecos.client.requests.get")
+    def test_failure_does_not_blank_existing_data(self, mock_get, client, tmp_path):
+        """실패한 시리즈의 기존 파일을 빈 데이터로 덮어쓰지 않는다.
+
+        덮어쓰면 일시적 장애 한 번에 차트가 통째로 비어버린다.
+        """
+        import os
+        import time
+
+        good = {
+            "series_id": "BOK_BASE_RATE",
+            "title": "Bank of Korea Base Rate",
+            "title_ko": "한국은행 기준금리",
+            "observations": [{"date": "2026-07-16", "value": 2.75}],
+        }
+        path = tmp_path / "BOK_BASE_RATE.json"
+        path.write_text(json.dumps(good, ensure_ascii=False))
+        stale = time.time() - 48 * 3600
+        os.utime(path, (stale, stale))
+
+        def side_effect(url, timeout=None):
+            if "722Y001" in url:
+                raise RuntimeError("502 Server Error: Bad Gateway")
+            return _mock_response(SAMPLE_STAT_RESPONSE)
+
+        mock_get.side_effect = side_effect
+        client.fetch_all(data_dir=tmp_path)
+
+        assert json.loads(path.read_text())["observations"] == good["observations"]
 
     @patch("ecos.client.requests.get")
     def test_uses_cache(self, mock_get, client, tmp_path):

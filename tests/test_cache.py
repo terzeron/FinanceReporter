@@ -4,7 +4,7 @@ import json
 import os
 import time
 
-from cache import is_fresh, load_cached
+from cache import is_fresh, load_cached, DEFAULT_MAX_AGE_HOURS
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +36,31 @@ class TestIsFresh:
         old_time = time.time() - 25 * 3600
         os.utime(path, (old_time, old_time))
         assert is_fresh(path) is False
+
+    def test_daily_cron_does_not_skip_previous_run(self, tmp_path):
+        """전날 같은 시각에 쓴 파일은 stale이어야 한다.
+
+        파이프라인은 매일 정시(07:00) cron으로 돈다. TTL이 정확히 24시간이면
+        체크 시점의 파일 나이가 항상 23시간대라 '신선함'으로 판정돼 수집을
+        건너뛰고, 결국 격일로만 갱신된다.
+        """
+        path = tmp_path / "data.json"
+        path.write_text("{}")
+        yesterday_same_time = time.time() - 23.5 * 3600
+        os.utime(path, (yesterday_same_time, yesterday_same_time))
+        assert is_fresh(path) is False
+
+    def test_default_ttl_leaves_margin_for_daily_run(self):
+        """기본 TTL은 24시간 미만이어야 한다 (cron 시각 흔들림 여유)."""
+        assert DEFAULT_MAX_AGE_HOURS < 24
+
+    def test_same_day_rerun_uses_cache(self, tmp_path):
+        """같은 날 재실행은 캐시를 쓴다 (수동 재실행 시 불필요한 호출 방지)."""
+        path = tmp_path / "data.json"
+        path.write_text("{}")
+        hours_ago = time.time() - 6 * 3600
+        os.utime(path, (hours_ago, hours_ago))
+        assert is_fresh(path) is True
 
     def test_custom_max_age(self, tmp_path):
         """max_age_hours 커스텀 값 적용."""

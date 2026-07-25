@@ -28,46 +28,11 @@ def _make_yf_df(dates: list[str], closes: list[float]) -> pd.DataFrame:
     )
 
 
-def _make_trading_df(dates: list[str]) -> pd.DataFrame:
-    """pykrx 투자자별 매매 반환 형식의 DataFrame."""
-    index = pd.DatetimeIndex(pd.to_datetime(dates), name="날짜")
-    return pd.DataFrame(
-        {
-            "개인": [100, 200, 300],
-            "외국인": [-50, -100, -150],
-            "기관계": [-50, -100, -150],
-        },
-        index=index,
-    )
-
-
-def _make_shorting_df(dates: list[str]) -> pd.DataFrame:
-    """pykrx 공매도 반환 형식의 DataFrame."""
-    index = pd.DatetimeIndex(pd.to_datetime(dates), name="날짜")
-    return pd.DataFrame(
-        {
-            "공매도거래대금": [1000, 2000, 3000],
-            "총거래대금": [100000, 200000, 300000],
-        },
-        index=index,
-    )
-
-
 @pytest.fixture
 def sample_yf():
     return _make_yf_df(
         ["2024-01-02", "2024-01-03", "2024-01-04"], [2650.0, 2660.0, 2655.0]
     )
-
-
-@pytest.fixture
-def sample_trading():
-    return _make_trading_df(["2024-01-02", "2024-01-03", "2024-01-04"])
-
-
-@pytest.fixture
-def sample_shorting():
-    return _make_shorting_df(["2024-01-02", "2024-01-03", "2024-01-04"])
 
 
 @pytest.fixture
@@ -95,39 +60,34 @@ class TestGetIndexHistory:
         result = client.get_index_history("^KS11")
         assert result == []
 
+    @patch("krx.client.yfinance.Ticker")
+    def test_drops_trailing_nan_close(self, mock_ticker_cls, client):
+        """마지막 미완결 행(Close=NaN)은 버린다.
 
-# ---------------------------------------------------------------------------
-# get_trading_by_investor (pykrx)
-# ---------------------------------------------------------------------------
+        yfinance는 장 마감 전 당일 행을 NaN 종가로 반환하는 경우가 있어,
+        그대로 두면 대시보드 최신값이 None으로 표시된다.
+        """
+        df = _make_yf_df(
+            ["2024-01-02", "2024-01-03", "2024-01-04"],
+            [2650.0, 2660.0, float("nan")],
+        )
+        mock_ticker_cls.return_value.history.return_value = df
+        result = client.get_index_history("^KS11")
+        assert len(result) == 2
+        assert result[-1]["date"] == "2024-01-03"
+        assert result[-1]["value"] == 2660.0
 
-
-class TestGetTradingByInvestor:
-    @patch("krx.client.stock.get_market_trading_value_by_date")
-    def test_returns_observations(self, mock_fn, client, sample_trading):
-        mock_fn.return_value = sample_trading
-        result = client.get_trading_by_investor("KOSPI", "외국인")
+    @patch("krx.client.yfinance.Ticker")
+    def test_keeps_interior_nan_close(self, mock_ticker_cls, client):
+        """중간 결측치는 유지한다 (차트 연속성 판단은 소비자 몫)."""
+        df = _make_yf_df(
+            ["2024-01-02", "2024-01-03", "2024-01-04"],
+            [2650.0, float("nan"), 2655.0],
+        )
+        mock_ticker_cls.return_value.history.return_value = df
+        result = client.get_index_history("^KS11")
         assert len(result) == 3
-        assert result[0]["value"] == -50
-
-    @patch("krx.client.stock.get_market_trading_value_by_date")
-    def test_unknown_investor_returns_empty(self, mock_fn, client, sample_trading):
-        mock_fn.return_value = sample_trading
-        result = client.get_trading_by_investor("KOSPI", "존재안함")
-        assert result == []
-
-
-# ---------------------------------------------------------------------------
-# get_short_selling (pykrx)
-# ---------------------------------------------------------------------------
-
-
-class TestGetShortSelling:
-    @patch("krx.client.stock.get_shorting_value_by_date")
-    def test_returns_observations(self, mock_fn, client, sample_shorting):
-        mock_fn.return_value = sample_shorting
-        result = client.get_short_selling("KOSPI")
-        assert len(result) == 3
-        assert result[0]["value"] == 1000
+        assert result[1]["value"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -148,49 +108,25 @@ class TestKrxSeries:
         assert "KOSPI" in ids
         assert "KOSDAQ" in ids
 
+    def test_only_index_series_remain(self):
+        """투자자별 매매·공매도 지표는 제거됐다 (KRX 로그인 요구로 수집 불가)."""
+        ids = {s["series_id"] for s in KRX_SERIES}
+        assert ids == {"KOSPI", "KOSDAQ"}
+        assert all(s["fetch_type"] == "index" for s in KRX_SERIES)
+
 
 class TestFetchAll:
-    @patch("krx.client.stock.get_shorting_value_by_date")
-    @patch("krx.client.stock.get_market_trading_value_by_date")
     @patch("krx.client.yfinance.Ticker")
-    def test_returns_all_series(
-        self,
-        mock_ticker_cls,
-        mock_trading,
-        mock_shorting,
-        client,
-        tmp_path,
-        sample_yf,
-        sample_trading,
-        sample_shorting,
-    ):
+    def test_returns_all_series(self, mock_ticker_cls, client, tmp_path, sample_yf):
         mock_ticker_cls.return_value.history.return_value = sample_yf
-        mock_trading.return_value = sample_trading
-        mock_shorting.return_value = sample_shorting
         results = client.fetch_all(data_dir=tmp_path)
         assert len(results) == len(KRX_SERIES)
 
-    @patch("krx.client.stock.get_shorting_value_by_date")
-    @patch("krx.client.stock.get_market_trading_value_by_date")
     @patch("krx.client.yfinance.Ticker")
-    def test_uses_cache(
-        self,
-        mock_ticker_cls,
-        mock_trading,
-        mock_shorting,
-        client,
-        tmp_path,
-        sample_yf,
-        sample_trading,
-        sample_shorting,
-    ):
+    def test_uses_cache(self, mock_ticker_cls, client, tmp_path, sample_yf):
         mock_ticker_cls.return_value.history.return_value = sample_yf
-        mock_trading.return_value = sample_trading
-        mock_shorting.return_value = sample_shorting
         client.fetch_all(data_dir=tmp_path)
         mock_ticker_cls.reset_mock()
-        mock_trading.reset_mock()
-        mock_shorting.reset_mock()
         results = client.fetch_all(data_dir=tmp_path)
         assert len(results) == len(KRX_SERIES)
         mock_ticker_cls.assert_not_called()

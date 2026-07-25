@@ -153,6 +153,23 @@ class TestBuildDashboard:
         assert (output / "charts" / "DGS10.png").exists()
         assert (output / "charts" / "VIX_1y.png").exists()
 
+    def test_prunes_stale_charts(self, tmp_path, charts_dir, data_dir):
+        """소스에 없는 차트는 배포 디렉토리에서 제거한다."""
+        output = tmp_path / "output"
+        (output / "charts").mkdir(parents=True)
+        stale = output / "charts" / "REMOVED.png"
+        stale.write_bytes(b"old")
+
+        build_dashboard(
+            output_dir=output,
+            data_dir=data_dir,
+            charts_dir=charts_dir,
+            analysis={"provider": "none", "content": "<p>x</p>", "generated_at": ""},
+        )
+
+        assert not stale.exists()
+        assert (output / "charts" / "DGS10.png").exists()
+
     def test_creates_output_dir(self, tmp_path, charts_dir, data_dir):
         """출력 디렉토리가 없으면 자동 생성."""
         output = tmp_path / "deep" / "nested" / "output"
@@ -288,6 +305,66 @@ class TestTabbedHtml:
         assert "addEventListener" in html
 
 
+def _series_json(sid: str) -> str:
+    return json.dumps(
+        {
+            "series_id": sid,
+            "title": sid,
+            "title_ko": sid,
+            "observations": [{"date": "2024-01-01", "value": 1.0}],
+        }
+    )
+
+
+class TestCollectSeries:
+    def test_series_order_controls_card_sequence(self, tmp_path):
+        """series_order 지정 시 카드가 해당 순서로 배열된다."""
+        from dashboard import _collect_series
+
+        for sid in ("COPPER", "GOLD", "WTI"):
+            (tmp_path / f"{sid}.json").write_text(_series_json(sid))
+        result = _collect_series(tmp_path, series_order=["WTI", "GOLD", "COPPER"])
+        assert [s["series_id"] for s in result] == ["WTI", "GOLD", "COPPER"]
+
+    def test_unlisted_series_appended_alphabetically(self, tmp_path):
+        """series_order 미포함 시리즈는 알파벳순으로 뒤에 추가된다."""
+        from dashboard import _collect_series
+
+        for sid in ("AAA", "GOLD", "ZZZ"):
+            (tmp_path / f"{sid}.json").write_text(_series_json(sid))
+        result = _collect_series(tmp_path, series_order=["GOLD"])
+        ids = [s["series_id"] for s in result]
+        assert ids[0] == "GOLD"
+        assert ids[1:] == ["AAA", "ZZZ"]
+
+    def test_no_order_falls_back_to_alphabetical(self, tmp_path):
+        """series_order=None이면 알파벳 순."""
+        from dashboard import _collect_series
+
+        for sid in ("ZZZ", "AAA"):
+            (tmp_path / f"{sid}.json").write_text(_series_json(sid))
+        result = _collect_series(tmp_path, series_order=None)
+        assert [s["series_id"] for s in result] == ["AAA", "ZZZ"]
+
+    def test_skips_empty_observations(self, tmp_path):
+        """관측값이 없는 시리즈는 카드 목록에서 제외된다."""
+        from dashboard import _collect_series
+
+        (tmp_path / "EMPTY.json").write_text(
+            json.dumps(
+                {
+                    "series_id": "EMPTY",
+                    "title": "E",
+                    "title_ko": "E",
+                    "observations": [],
+                }
+            )
+        )
+        (tmp_path / "NORMAL.json").write_text(_series_json("NORMAL"))
+        result = _collect_series(tmp_path)
+        assert [s["series_id"] for s in result] == ["NORMAL"]
+
+
 class TestBuildTabbedDashboard:
     def test_creates_index_with_tabs(self, tmp_path, charts_dir, data_dir):
         """탭 대시보드 index.html 생성."""
@@ -327,3 +404,72 @@ class TestBuildTabbedDashboard:
         assert 'data-tab="kr"' in html
         assert "US 미국" in html
         assert "KR 한국" in html
+
+    def test_prunes_stale_charts(self, tmp_path, charts_dir, data_dir):
+        """소스에 없는 차트는 배포 디렉토리에서 제거한다.
+
+        복사만 하면 지표를 뺄 때마다 고아 PNG가 영구히 남는다.
+        """
+        from dashboard import build_tabbed_dashboard
+
+        us_a = {"provider": "none", "content": "<p>US</p>", "generated_at": ""}
+        kr_a = {"provider": "none", "content": "<p>KR</p>", "generated_at": ""}
+        output = tmp_path / "output"
+
+        kr_data = tmp_path / "kr_data"
+        kr_data.mkdir()
+        kr_charts = tmp_path / "kr_charts"
+        kr_charts.mkdir()
+        (kr_charts / "KOSPI.png").write_bytes(b"fake png")
+
+        # 이전 배포에서 남은 고아 파일들
+        (output / "charts" / "us").mkdir(parents=True)
+        (output / "charts" / "kr").mkdir(parents=True)
+        stale_us = output / "charts" / "us" / "REMOVED.png"
+        stale_kr = output / "charts" / "kr" / "KOSPI_SHORT.png"
+        stale_us.write_bytes(b"old")
+        stale_kr.write_bytes(b"old")
+
+        build_tabbed_dashboard(
+            output_dir=output,
+            us_data_dir=data_dir,
+            us_charts_dir=charts_dir,
+            us_analysis=us_a,
+            kr_data_dir=kr_data,
+            kr_charts_dir=kr_charts,
+            kr_analysis=kr_a,
+        )
+
+        assert not stale_us.exists()
+        assert not stale_kr.exists()
+        # 현행 차트는 그대로 복사돼 있어야 한다
+        assert (output / "charts" / "us" / "DGS10.png").exists()
+        assert (output / "charts" / "kr" / "KOSPI.png").exists()
+
+    def test_prunes_flat_layout_leftovers(self, tmp_path, charts_dir, data_dir):
+        """us/kr 분리 이전 flat 레이아웃의 최상위 PNG를 정리한다."""
+        from dashboard import build_tabbed_dashboard
+
+        output = tmp_path / "output"
+        kr_data = tmp_path / "kr_data"
+        kr_data.mkdir()
+        kr_charts = tmp_path / "kr_charts"
+        kr_charts.mkdir()
+        (kr_charts / "KOSPI.png").write_bytes(b"fake png")
+
+        (output / "charts").mkdir(parents=True)
+        flat = output / "charts" / "DGS10_1m.png"
+        flat.write_bytes(b"old flat layout")
+
+        build_tabbed_dashboard(
+            output_dir=output,
+            us_data_dir=data_dir,
+            us_charts_dir=charts_dir,
+            us_analysis={"provider": "none", "content": "", "generated_at": ""},
+            kr_data_dir=kr_data,
+            kr_charts_dir=kr_charts,
+            kr_analysis={"provider": "none", "content": "", "generated_at": ""},
+        )
+
+        assert not flat.exists()
+        assert (output / "charts" / "us" / "DGS10.png").exists()

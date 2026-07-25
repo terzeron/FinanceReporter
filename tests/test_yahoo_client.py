@@ -60,10 +60,12 @@ def client():
 
 class TestSeriesMap:
     def test_contains_required_symbols(self):
-        """필수 3개 심볼이 정의되어 있는지 확인."""
+        """필수 심볼이 정의되어 있는지 확인."""
         assert "^TNX" in SERIES_MAP
         assert "^VIX" in SERIES_MAP
         assert "GC=F" in SERIES_MAP
+        assert "SI=F" in SERIES_MAP
+        assert "HG=F" in SERIES_MAP
 
     def test_each_entry_has_required_fields(self):
         """각 항목에 title, title_ko, series_id가 있는지 확인."""
@@ -205,6 +207,27 @@ class TestFetchAll:
             assert loaded["series_id"] == data["series_id"]
             assert loaded["title"] == data["title"]
             assert len(loaded["observations"]) == len(data["observations"])
+
+    @patch("yahoo.client.yfinance.Ticker")
+    def test_one_series_failure_does_not_abort_rest(
+        self, mock_ticker_cls, client, sample_df, tmp_path
+    ):
+        """심볼 1개가 실패해도 나머지는 계속 수집한다."""
+        broken = next(iter(SERIES_MAP))
+
+        def history_side_effect(*a, **kw):
+            if mock_ticker_cls.call_args[0][0] == broken:
+                raise RuntimeError("yfinance 일시적 오류")
+            return sample_df
+
+        mock_ticker_cls.return_value.history.side_effect = history_side_effect
+        results = client.fetch_all(data_dir=tmp_path)
+
+        by_id = {d["series_id"]: d for d in results}
+        assert SERIES_MAP[broken]["series_id"] not in by_id
+        assert len(results) == len(SERIES_MAP) - 1
+        others = [v["series_id"] for k, v in SERIES_MAP.items() if k != broken]
+        assert all(by_id[sid]["observations"] for sid in others)
 
     @patch("yahoo.client.yfinance.Ticker")
     def test_uses_cache(self, mock_ticker_cls, client, sample_df, tmp_path):

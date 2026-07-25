@@ -19,11 +19,6 @@ SERIES_MAP: dict[str, dict[str, str]] = {
         "title": "CBOE Volatility Index",
         "title_ko": "변동성 지수",
     },
-    "GC=F": {
-        "series_id": "GOLD",
-        "title": "Gold Futures",
-        "title_ko": "금 선물",
-    },
     "DX-Y.NYB": {
         "series_id": "DXY",
         "title": "US Dollar Index",
@@ -33,6 +28,21 @@ SERIES_MAP: dict[str, dict[str, str]] = {
         "series_id": "WTI",
         "title": "WTI Crude Oil Futures",
         "title_ko": "WTI 원유 선물",
+    },
+    "GC=F": {
+        "series_id": "GOLD",
+        "title": "Gold Futures",
+        "title_ko": "금 선물",
+    },
+    "SI=F": {
+        "series_id": "SILVER",
+        "title": "Silver Futures",
+        "title_ko": "은 선물",
+    },
+    "HG=F": {
+        "series_id": "COPPER",
+        "title": "Copper Futures",
+        "title_ko": "동 선물",
     },
 }
 
@@ -113,7 +123,13 @@ class YahooClient:
                     results.append(cached)
                     continue
 
-            data = self.get_series_data(symbol, period=period)
+            # 시리즈 단위로 격리한다. 하나가 실패해도 나머지 수집은 계속하고,
+            # 기존 파일을 빈 데이터로 덮어쓰지 않도록 결과에서 제외한다.
+            try:
+                data = self.get_series_data(symbol, period=period)
+            except Exception as e:
+                print(f"  ⚠️  {sid} 수집 실패: {e}")
+                continue
             results.append(data)
 
         if data_dir is not None:

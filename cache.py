@@ -1,14 +1,17 @@
 """파일 기반 캐시 유틸리티.
 
 data/*.json 파일의 신선도를 체크하여 불필요한 API 호출을 방지한다.
-기본 TTL은 24시간이며, 만료 시 자동으로 무효화된다.
+TTL이 만료되면 자동으로 무효화된다.
 """
 
 import json
 import time
 from pathlib import Path
 
-DEFAULT_MAX_AGE_HOURS = 24
+# 파이프라인은 매일 정시 cron으로 돈다. TTL이 정확히 24시간이면 체크 시점의
+# 파일 나이가 항상 23시간대라 '신선함'으로 판정돼 수집을 건너뛰고, 결국
+# 격일로만 갱신된다. 20시간이면 매일 갱신되면서 같은 날 재실행은 캐시를 쓴다.
+DEFAULT_MAX_AGE_HOURS = 20
 
 
 def is_fresh(

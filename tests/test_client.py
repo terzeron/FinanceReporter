@@ -304,6 +304,44 @@ class TestFredClientMain:
         assert len(json_files) == len(EXAMPLE_SERIES)
 
     @patch("fred.client.requests.get")
+    def test_one_series_failure_does_not_abort_rest(
+        self, mock_get, monkeypatch, tmp_path, capsys
+    ):
+        """시리즈 1개가 실패해도 나머지는 계속 수집한다.
+
+        실제 운영에서 NFCI의 일시적 502가 뒤따르는 5개 시리즈 수집을
+        통째로 건너뛰게 만들었다.
+        """
+        from fred.client import main as fred_main, EXAMPLE_SERIES
+
+        monkeypatch.setenv("FRED_API_KEY", "test-key")
+        monkeypatch.chdir(tmp_path)
+
+        broken = "NFCI"
+
+        def mock_get_fn(url, params=None):
+            if (params or {}).get("series_id") == broken:
+                raise RuntimeError("502 Server Error: Bad Gateway")
+            if "series/observations" in url:
+                return _mock_response(
+                    {"observations": [{"date": "2024-01-01", "value": "4.25"}]}
+                )
+            if "series/search" in url:
+                return _mock_response({"seriess": []})
+            sid = params.get("series_id", "UNKNOWN")
+            return _mock_response({"seriess": [{"id": sid, "title": f"Title {sid}"}]})
+
+        mock_get.side_effect = mock_get_fn
+
+        fred_main()
+
+        data_dir = tmp_path / "data"
+        saved = {p.stem for p in data_dir.glob("*.json")}
+        # 실패한 1개를 뺀 나머지 전부가 저장돼야 한다
+        assert saved == set(EXAMPLE_SERIES) - {broken}
+        assert broken in capsys.readouterr().out
+
+    @patch("fred.client.requests.get")
     def test_uses_cache(self, mock_get, monkeypatch, tmp_path, capsys):
         """캐시 유효 시 API 호출 건너뛴다."""
         import json as json_mod

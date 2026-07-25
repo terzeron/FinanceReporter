@@ -12,30 +12,100 @@ FALLBACK_MESSAGE = (
 )
 
 PROMPT_TEMPLATE = """\
-당신은 경제 분석 전문가입니다. 아래는 주요 경제지표의 최근 1개월 데이터입니다.
+당신은 경제 분석 전문가입니다. 아래는 주요 경제지표의 최근 1개월 추세(그룹별 정리)와 외신 뉴스 요약입니다.
 
+[경제지표 추세 — 그룹별]
 {data_summary}
 
-위 데이터를 종합적으로 분석하여 다음을 포함하는 경제 동향 분석을 한국어로 작성하세요:
-1. 현재 경제 상황 요약 (금리, 변동성, 자산 시장 흐름)
-2. 주요 지표 간 상관관계 및 시사점
-3. 향후 전망 및 주의할 점
-4. 향후 1개월~1분기 경제 전망 (금리 방향, 인플레이션 흐름, 자산시장 시나리오 등 구체적으로)
+[최근 주요 경제 뉴스 (Reuters, Bloomberg, CNBC, Yahoo Finance, WSJ)]
+{news_summary}
 
-HTML 형식으로 4개의 <p> 태그로 작성하세요. 제목 태그는 포함하지 마세요."""
+위 지표와 뉴스를 바탕으로 경제 동향 분석을 한국어로 정확히 3단락으로 작성하세요.
+- 구체적 수치를 나열하지 말고, 방향성(상승·하락·보합)과 흐름 위주로 해석하세요.
+- 각 단락은 2~3문장으로 작성하세요.
+
+1단락 (지표 종합 분석): 각 그룹별 지표 흐름을 종합하여 현재 금리·물가·고용·자산시장의 전반적 상태를 해석하세요.
+2단락 (뉴스 종합 분석): 외신 뉴스에서 공통적으로 다루는 주요 테마와 시장이 주목하는 이슈를 요약하고, 주요 언론사(Reuters·Bloomberg·CNBC 등)가 각각 어떤 전망을 내놓았는지 한 문장씩 간략히 언급하세요.
+3단락 (종합 전망): 지표 흐름과 뉴스 이슈를 함께 고려하여 향후 1개월~1분기 전망과 주의할 리스크를 제시하세요.
+
+HTML 형식으로 3개의 <p> 태그로 작성하세요. 제목 태그는 포함하지 마세요."""
 
 PROMPT_TEMPLATE_KR = """\
-당신은 한국 경제 분석 전문가입니다. 아래는 한국 주요 경제지표의 최근 1개월 데이터입니다.
+당신은 한국 경제 분석 전문가입니다. 아래는 한국 주요 경제지표의 최근 1개월 추세(그룹별 정리)와 외신 뉴스 요약입니다.
 
+[경제지표 추세 — 그룹별]
 {data_summary}
 
-위 데이터를 종합적으로 분석하여 다음을 포함하는 한국 경제 동향 분석을 작성하세요:
-1. 현재 한국 경제 상황 요약 (금리, 환율, 주식시장, 물가)
-2. 주요 지표 간 상관관계 및 시사점 (한미 금리차, 원/달러 환율, 외국인 투자 등)
-3. 한국은행 통화정책 전망
-4. 향후 1개월~1분기 전망 (환율, KOSPI, 부동산, 물가 등 구체적으로)
+[최근 주요 경제 뉴스 (Reuters, Bloomberg, CNBC, Yahoo Finance, WSJ)]
+{news_summary}
 
-HTML 형식으로 4개의 <p> 태그로 작성하세요. 제목 태그는 포함하지 마세요."""
+위 지표와 뉴스를 바탕으로 한국 경제 동향 분석을 한국어로 작성하세요.
+- 구체적 수치를 나열하지 말고, 방향성(상승·하락·보합)과 흐름 위주로 해석하세요.
+- 각 단락은 2~3문장으로 작성하세요.
+
+1단락 (지표 종합 분석): 각 그룹별 지표 흐름을 종합하여 현재 금리·환율·물가·고용·주식시장의 전반적 상태를 해석하세요.
+2단락 (뉴스 종합 분석): 외신 뉴스에서 "한국", "Korea", "Korean" 등 한국을 명시적으로 언급한 기사가 있는 경우에만 작성하세요. 해당 언론사가 한국 경제에 대해 내놓은 전망을 한 문장씩 간략히 언급하세요. 한국을 직접 언급한 외신이 없으면, 글로벌 동향이 한국에 간접적으로 영향을 줄 수 있다는 추론이라도 이 단락은 반드시 생략하세요.
+3단락 (종합 전망): 지표 흐름과 뉴스 이슈를 함께 고려하여 통화정책 방향, 시장 흐름, 주의할 리스크를 제시하세요.
+
+HTML 형식으로 <p> 태그로 작성하세요. 2단락을 생략할 경우 2개, 포함할 경우 3개의 <p> 태그로 작성하세요. 제목 태그는 포함하지 마세요."""
+
+# US 시리즈 그룹 (FRED 15개 + Yahoo 7개)
+US_SERIES_GROUPS: dict[str, list[str]] = {
+    "금리·통화·환율": [
+        "DGS2",
+        "DGS10",
+        "T10Y2Y",
+        "TNX",
+        "BAA10Y",
+        "M2SL",
+        "WALCL",
+        "NFCI",
+        "DXY",
+    ],
+    "물가·고용·경기": [
+        "CPIAUCSL",
+        "T5YIE",
+        "UNRATE",
+        "PAYEMS",
+        "PSAVERT",
+        "SAHMREALTIME",
+    ],
+    "심리·시장": ["UMCSENT", "HNFSEPUSSA", "VIX"],
+    "천연자원": ["WTI", "GOLD", "SILVER", "COPPER"],
+}
+
+# KR 시리즈 그룹 (ECOS 12개 + KOSIS 9개 + KRX 5개)
+KR_SERIES_GROUPS: dict[str, list[str]] = {
+    "금리·환율·통화": [
+        "BOK_BASE_RATE",
+        "KR_TREASURY_3Y",
+        "KR_TREASURY_10Y",
+        "KR_CORP_BOND",
+        "KRW_USD",
+        "JPY_USD",
+        "KRW_CNY",
+        "KR_M2",
+    ],
+    "물가·고용·경기": [
+        "KR_CPI",
+        "KR_PPI",
+        "KR_UNEMPLOYMENT",
+        "KR_EMPLOYED",
+        "KR_GDP",
+        "KR_IPI",
+        "KR_RETAIL",
+        "KR_EXPORT",
+        "KR_IMPORT",
+    ],
+    "심리·주택": [
+        "KR_BSI",
+        "KR_CSI",
+        "KR_ESI",
+        "KR_HOUSING_PRICE",
+        "KR_HOUSING_PERMIT",
+    ],
+    "주식시장": ["KOSPI", "KOSDAQ"],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -129,38 +199,94 @@ def extract_all_recent(
 
 
 def _summarize_series(data: dict) -> str:
-    """단일 시리즈의 데이터를 텍스트 요약으로 변환."""
+    """단일 시리즈의 데이터를 방향성 요약으로 변환."""
     obs = [o for o in data["observations"] if o["value"] is not None]
     if not obs:
         return f"- {data.get('title_ko', data['title'])} ({data['series_id']}): 데이터 없음"
 
     values = [o["value"] for o in obs]
     name = data.get("title_ko") or data["title"]
-    return (
-        f"- {name} ({data['series_id']}): "
-        f"기간 {obs[0]['date']} ~ {obs[-1]['date']}, "
-        f"시작 {values[0]:.2f}, 종료 {values[-1]:.2f}, "
-        f"최고 {max(values):.2f}, 최저 {min(values):.2f}, "
-        f"변동폭 {values[-1] - values[0]:+.2f}"
-    )
+    change = values[-1] - values[0]
+    pct = (change / abs(values[0]) * 100) if values[0] != 0 else 0
+    if abs(pct) < 0.5:
+        direction = "보합"
+    elif change > 0:
+        direction = "상승"
+    else:
+        direction = "하락"
+    return f"- {name} ({data['series_id']}): {direction}"
 
 
-def build_prompt(recent_data_list: list[dict], market: str = "us") -> str:
+def _format_grouped_data(
+    data_list: list[dict],
+    groups: dict[str, list[str]],
+) -> str:
+    """시리즈를 그룹별로 묶어 프롬프트용 텍스트를 생성한다."""
+    by_id = {d["series_id"]: _summarize_series(d) for d in data_list}
+    lines: list[str] = []
+    assigned: set[str] = set()
+
+    for group_name, series_ids in groups.items():
+        group_lines = [
+            by_id[sid] for sid in series_ids if sid in by_id and sid not in assigned
+        ]
+        if group_lines:
+            lines.append(f"▶ {group_name}")
+            lines.extend(group_lines)
+            assigned.update(sid for sid in series_ids if sid in by_id)
+
+    remaining = [by_id[sid] for sid in by_id if sid not in assigned]
+    if remaining:
+        lines.append("▶ 기타")
+        lines.extend(remaining)
+
+    return "\n".join(lines) if lines else "(분석할 데이터가 없습니다)"
+
+
+def _format_news(news_list: list[dict]) -> str:
+    """뉴스 리스트를 프롬프트용 텍스트로 변환."""
+    if not news_list:
+        return "(최신 외신 뉴스 없음)"
+    lines = []
+    for article in news_list:
+        source = article.get("source", "")
+        title = article.get("title", "")
+        text = article.get("text") or article.get("summary", "")
+        date = article.get("published", "")
+        line = f"[{source}] {title}"
+        if date:
+            line += f" ({date})"
+        if text:
+            line += f"\n  → {text}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def build_prompt(
+    recent_data_list: list[dict],
+    market: str = "us",
+    news_list: list[dict] | None = None,
+) -> str:
     """최근 데이터 리스트로 AI 분석용 프롬프트를 생성한다.
 
     Args:
         recent_data_list: extract_all_recent()의 반환값
         market: "us" 또는 "kr"
+        news_list: NewsFetcher.fetch_all()의 반환값 (없으면 뉴스 섹션 비움)
 
     Returns:
         프롬프트 문자열
     """
     template = PROMPT_TEMPLATE_KR if market == "kr" else PROMPT_TEMPLATE
-    if not recent_data_list:
-        return template.format(data_summary="(분석할 데이터가 없습니다)")
+    groups = KR_SERIES_GROUPS if market == "kr" else US_SERIES_GROUPS
 
-    summaries = [_summarize_series(d) for d in recent_data_list]
-    return template.format(data_summary="\n".join(summaries))
+    if not recent_data_list:
+        data_summary = "(분석할 데이터가 없습니다)"
+    else:
+        data_summary = _format_grouped_data(recent_data_list, groups)
+
+    news_summary = _format_news(news_list) if news_list else "(최신 외신 뉴스 없음)"
+    return template.format(data_summary=data_summary, news_summary=news_summary)
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +300,7 @@ def _call_claude(prompt: str) -> str:
 
     client = anthropic.Anthropic()
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=2048,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -257,7 +383,8 @@ def analyze_with_ai(
             data_dir.mkdir(parents=True, exist_ok=True)
             cache_path.write_text(json.dumps(result, ensure_ascii=False, indent=2))
             return result
-        except Exception:
+        except Exception as e:
+            print(f"  ⚠️  {provider} 호출 실패: {type(e).__name__}: {e}")
             continue
 
     result = {

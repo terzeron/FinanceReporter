@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+#!/bin/sh
+''''exec "$([ -d "$PWD/.venv" ] && printf %s "$PWD/.venv/bin/python" || command -v python3)" "$0" "$@" # '''
 
 import sys
 import os
