@@ -243,9 +243,9 @@ ECOS_SERIES = [
         "cycle": "D",
         "start": "20200101",
         "end": "20991231",
-        "series_id": "JPY_USD",
-        "title": "JPY/USD Exchange Rate",
-        "title_ko": "엔/달러 환율",
+        "series_id": "KRW_JPY",
+        "title": "KRW/JPY(100) Exchange Rate",
+        "title_ko": "원/엔(100엔) 환율",
     },
     # 물가
     {

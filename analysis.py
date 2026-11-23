@@ -82,7 +82,7 @@ KR_SERIES_GROUPS: dict[str, list[str]] = {
         "KR_TREASURY_10Y",
         "KR_CORP_BOND",
         "KRW_USD",
-        "JPY_USD",
+        "KRW_JPY",
         "KRW_CNY",
         "KR_M2",
     ],
